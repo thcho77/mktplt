@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="글로벌 인플루언서 검색 및 관리 시스템 — 11개 플랫폼, 실시간 수집, 스마트 필터링">
+  <title>Influencer Hub — 인플루언서 수집 및 관리 시스템</title>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <div class="app-wrapper">
+    <!-- Animated Background Blobs -->
+    <div class="blob blob-1"></div>
+    <div class="blob blob-2"></div>
+    <div class="blob blob-3"></div>
+
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-logo">
+        <div class="logo-icon">✦</div>
+        <span class="logo-text">INFLUHUB</span>
+      </div>
+
+      <nav class="sidebar-nav">
+        <a href="#" class="nav-item active" data-view="dashboard" id="nav-dashboard">
+          <span class="nav-icon">◈</span>
+          <span class="nav-label">대시보드</span>
+        </a>
+        <a href="#" class="nav-item" data-view="influencers" id="nav-influencers">
+          <span class="nav-icon">◉</span>
+          <span class="nav-label">인플루언서 목록</span>
+        </a>
+        <a href="#" class="nav-item" data-view="collect" id="nav-collect">
+          <span class="nav-icon">◎</span>
+          <span class="nav-label">데이터 수집</span>
+        </a>
+        <a href="#" class="nav-item" data-view="bookmarks" id="nav-bookmarks">
+          <span class="nav-icon">◇</span>
+          <span class="nav-label">즐겨찾기</span>
+        </a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="db-status" id="db-status">
+          <span class="status-dot"></span>
+          <span class="status-text">DB 연결 확인 중...</span>
+        </div>
+        <div class="version-badge">v2.0</div>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content" id="main-content">
+      <!-- Top Bar -->
+      <header class="topbar">
+        <div class="topbar-left">
+          <h2 class="page-title" id="page-title">대시보드</h2>
+          <p class="page-subtitle" id="page-subtitle">인플루언서 현황 및 통계 요약</p>
+        </div>
+        <div class="topbar-right">
+          <div class="live-badge">
+            <span class="pulse-dot"></span>
+            LIVE · Port 3001
+          </div>
+          <button class="btn-refresh" id="btn-global-refresh" title="새로고침">↻</button>
+        </div>
+      </header>
+
+      <!-- ===== DASHBOARD VIEW ===== -->
+      <section class="view active" id="view-dashboard">
+        <!-- Stats Grid -->
+        <div class="stats-grid">
+          <div class="stat-card card-purple" id="stat-card-total">
+            <div class="stat-icon">👥</div>
+            <div class="stat-body">
+              <div class="stat-value" id="stat-total">—</div>
+              <div class="stat-label">누적 인플루언서</div>
+            </div>
+            <div class="stat-trend up">↑</div>
+          </div>
+          <div class="stat-card card-cyan" id="stat-card-bookmarked">
+            <div class="stat-icon">⭐</div>
+            <div class="stat-body">
+              <div class="stat-value" id="stat-bookmarked">—</div>
+              <div class="stat-label">즐겨찾기 파트너</div>
+            </div>
+          </div>
+          <div class="stat-card card-pink" id="stat-card-instagram">
+            <div class="stat-icon">📸</div>
+            <div class="stat-body">
+              <div class="stat-value" id="stat-instagram">—</div>
+              <div class="stat-label">Instagram 보유</div>
+            </div>
+          </div>
+          <div class="stat-card card-red" id="stat-card-youtube">
+            <div class="stat-icon">▶</div>
+            <div class="stat-body">
+              <div class="stat-value" id="stat-youtube">—</div>
+              <div class="stat-label">YouTube 보유</div>
+            </div>
+          </div>
+          <div class="stat-card card-blue" id="stat-card-bilibili">
+            <div class="stat-icon">📺</div>
+            <div class="stat-body">
+              <div class="stat-value" id="stat-bilibili">—</div>
+              <div class="stat-label">Bilibili 보유</div>
+            </div>
+          </div>
+          <div class="stat-card card-green" id="stat-card-naver">
+            <div class="stat-icon">📝</div>
+            <div class="stat-body">
+              <div class="stat-value" id="stat-naver">—</div>
+              <div class="stat-label">Naver 블로그</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Charts Row -->
+        <div class="charts-row">
+          <div class="chart-card">
+            <div class="chart-header">
+              <h3>플랫폼별 분포</h3>
+              <span class="chart-badge">실시간</span>
+            </div>
+            <div class="chart-container">
+              <canvas id="chart-platform"></canvas>
+            </div>
+          </div>
+          <div class="chart-card">
+            <div class="chart-header">
+              <h3>카테고리 TOP 5</h3>
+              <span class="chart-badge">랭킹</span>
+            </div>
+            <div class="chart-container">
+              <canvas id="chart-category"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- Recent Activity -->
+        <div class="activity-card">
+          <div class="card-header-row">
+            <h3>최근 업데이트 인플루언서</h3>
+            <button class="btn-text" onclick="switchView('influencers')">전체 보기 →</button>
+          </div>
+          <div class="recent-list" id="recent-list">
+            <div class="empty-state">데이터를 불러오는 중...</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== INFLUENCER LIST VIEW ===== -->
+      <section class="view" id="view-influencers">
+        <!-- Filter Panel -->
+        <div class="filter-panel">
+          <div class="filter-row">
+            <!-- Search -->
+            <div class="filter-group search-group">
+              <span class="filter-icon">🔍</span>
+              <input type="text" id="filter-search" placeholder="계정명, 카테고리 검색..." class="filter-input">
+            </div>
+
+            <!-- Platform Filter -->
+            <div class="filter-group">
+              <label class="filter-label">플랫폼</label>
+              <select id="filter-platform" class="filter-select">
+                <option value="">전체 플랫폼</option>
+                <option value="naver_blog">네이버 블로그</option>
+                <option value="instagram">Instagram</option>
+                <option value="facebook">Facebook</option>
+                <option value="youtube">YouTube</option>
+                <option value="threads">Threads</option>
+                <option value="tiktok">TikTok</option>
+                <option value="twitter">X (Twitter)</option>
+                <option value="cosme">@cosme</option>
+                <option value="douyin">Douyin</option>
+                <option value="xiaohongshu">小红书</option>
+                <option value="bilibili">Bilibili</option>
+              </select>
+            </div>
+
+            <!-- Category Filter -->
+            <div class="filter-group">
+              <label class="filter-label">카테고리</label>
+              <select id="filter-category" class="filter-select">
+                <option value="">전체 카테고리</option>
+                <option value="커머스">커머스</option>
+                <option value="음악">음악</option>
+                <option value="영화">영화</option>
+                <option value="기술">기술/IT</option>
+                <option value="일상">일상/브이로그</option>
+                <option value="코미디">코미디</option>
+                <option value="먹방">먹방/푸드</option>
+                <option value="여행">여행</option>
+                <option value="패션">패션/뷰티</option>
+                <option value="Pet">펫</option>
+                <option value="연예">연예/엔터</option>
+                <option value="홈데코">홈/인테리어</option>
+                <option value="스포츠">스포츠/피트니스</option>
+                <option value="교육">교육/강의</option>
+              </select>
+            </div>
+
+            <!-- Follower Range -->
+            <div class="filter-group">
+              <label class="filter-label">팔로워</label>
+              <div class="filter-range">
+                <input type="number" id="filter-min-followers" placeholder="최소" class="filter-input range-input">
+                <span class="range-sep">~</span>
+                <input type="number" id="filter-max-followers" placeholder="최대" class="filter-input range-input">
+              </div>
+            </div>
+
+            <button class="btn-apply" id="btn-apply-filter">
+              <span>필터 적용</span>
+            </button>
+            <button class="btn-reset" id="btn-reset-filter">초기화</button>
+          </div>
+        </div>
+
+        <!-- Table -->
+        <div class="table-card">
+          <div class="table-header-row">
+            <div class="table-count">
+              총 <span id="table-count">0</span>명
+            </div>
+            <div class="table-actions">
+              <button class="btn-bookmark-filter" id="btn-filter-bookmark">
+                <span>⭐ 즐겨찾기만</span>
+              </button>
+              <button class="btn-export" id="btn-export">
+                <span>↓ CSV 내보내기</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="table-wrapper">
+            <table class="influencer-table" id="influencer-table">
+              <thead>
+                <tr>
+                  <th class="col-bookmark"></th>
+                  <th class="col-platform">플랫폼</th>
+                  <th class="col-name">계정명</th>
+                  <th class="col-category">카테고리</th>
+                  <th class="col-followers sortable" data-sort="follower_count">팔로워 ↕</th>
+                  <th class="col-views sortable" data-sort="avg_view_count">평균 조회수 ↕</th>
+                  <th class="col-country">국가</th>
+                  <th class="col-email">이메일</th>
+                  <th class="col-updated">업데이트</th>
+                  <th class="col-action">상세</th>
+                </tr>
+              </thead>
+              <tbody id="influencer-tbody">
+                <tr><td colspan="10" class="loading-row">데이터 로딩 중...</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="table-pagination" id="table-pagination"></div>
+        </div>
+      </section>
+
+      <!-- ===== DATA COLLECT VIEW ===== -->
+      <section class="view" id="view-collect">
+        <div class="collect-layout">
+          <!-- Collect Form -->
+          <div class="collect-form-card">
+            <h3 class="form-title">🔎 인플루언서 검색 조건 설정</h3>
+
+            <form id="collect-form">
+              <!-- Platform Selection -->
+              <div class="form-section">
+                <label class="form-label">수집 플랫폼 선택 <span class="required">*</span></label>
+                <div class="platform-grid">
+                  <label class="platform-check">
+                    <input type="checkbox" name="platforms" value="naver_blog">
+                    <span class="platform-chip">
+                      <span class="p-icon">N</span> 네이버 블로그
+                    </span>
+                  </label>
+                  <label class="platform-check">
+                    <input type="checkbox" name="platforms" value="instagram">
+                    <span class="platform-chip">
+                      <span class="p-icon ig">📸</span> Instagram
+                    </span>
+                  </label>
+                  <label class="platform-check">
+                    <input type="checkbox" name="platforms" value="facebook">
+                    <span class="platform-chip">
+                      <span class="p-icon fb">F</span> Facebook
+                    </span>
+                  </label>
+                  <label class="platform-check">
+                    <input type="checkbox" name="platforms" value="youtube">
+                    <span class="platform-chip">
+                      <span class="p-icon yt">▶</span> YouTube
+                    </span>
+                  </label>
+                  <label class="platform-check">
+                    <input type="checkbox" name="platforms" value="threads">
+                    <span class="platform-chip">
+                      <span class="p-icon th">@</span> Threads
+                    </span>
+                  </label>
+                  <label class="platform-check">
+                    <input type="checkbox" name="platforms" value="tiktok">
+                    <span class="platform-chip">
+                      <span class="p-icon tt">♪</span> TikTok
+                    </span>
+                  </label>
+                  <label class="platform-check">
+                    <input type="checkbox" name="platforms" value="twitter">
+                    <span class="platform-chip">
+                      <span class="p-icon tw">X</span> X (Twitter)
+                    </span>
+                  </label>
+                  <label class="platform-check">
+                    <input type="checkbox" name="platforms" value="cosme">
+                    <span class="platform-chip">
+                      <span class="p-icon cs">♡</span> @cosme
+                    </span>
+                  </label>
+                  <label class="platform-check">
+                    <input type="checkbox" name="platforms" value="douyin">
+                    <span class="platform-chip">
+                      <span class="p-icon dy">抖</span> Douyin
+                    </span>
+                  </label>
+                  <label class="platform-check">
+                    <input type="checkbox" name="platforms" value="xiaohongshu">
+                    <span class="platform-chip">
+                      <span class="p-icon xh">红</span> 小红书
+                    </span>
+                  </label>
+                  <label class="platform-check">
+                    <input type="checkbox" name="platforms" value="bilibili" checked>
+                    <span class="platform-chip">
+                      <span class="p-icon bi">B</span> Bilibili
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              <!-- Category -->
+              <div class="form-section">
+                <label class="form-label" for="collect-category">콘텐츠 카테고리</label>
+                <select id="collect-category" name="category" class="form-select">
+                  <option value="">전체 카테고리</option>
+                  <option value="커머스">커머스</option>
+                  <option value="음악">음악</option>
+                  <option value="영화">영화</option>
+                  <option value="기술">기술/IT</option>
+                  <option value="일상">일상/브이로그</option>
+                  <option value="코미디">코미디</option>
+                  <option value="먹방">먹방/푸드</option>
+                  <option value="여행">여행</option>
+                  <option value="패션">패션/뷰티</option>
+                  <option value="Pet">펫</option>
+                  <option value="연예">연예/엔터</option>
+                  <option value="홈데코">홈/인테리어</option>
+                  <option value="스포츠">스포츠/피트니스</option>
+                  <option value="교육">교육/강의</option>
+                </select>
+              </div>
+
+              <!-- Follower Range -->
+              <div class="form-section form-row">
+                <div class="form-col">
+                  <label class="form-label" for="collect-min">최소 팔로워</label>
+                  <input type="number" id="collect-min" name="followers_min" class="form-input" placeholder="5000" value="5000">
+                </div>
+                <div class="form-col">
+                  <label class="form-label" for="collect-max">최대 팔로워</label>
+                  <input type="number" id="collect-max" name="followers_max" class="form-input" placeholder="10000000">
+                </div>
+              </div>
+
+              <!-- Country -->
+              <div class="form-section">
+                <label class="form-label" for="collect-country">대상 국가</label>
+                <select id="collect-country" name="country" class="form-select">
+                  <option value="ALL">전체 국가</option>
+                  <option value="KR">한국 (KR)</option>
+                  <option value="JP">일본 (JP)</option>
+                  <option value="CN">중국 (CN)</option>
+                  <option value="US">미국 (US)</option>
+                  <option value="TW">대만 (TW)</option>
+                  <option value="HK">홍콩 (HK)</option>
+                  <option value="TH">태국 (TH)</option>
+                  <option value="VN">베트남 (VN)</option>
+                  <option value="ID">인도네시아 (ID)</option>
+                </select>
+              </div>
+
+              <button type="submit" class="btn-collect" id="btn-collect">
+                <span class="btn-collect-icon">🚀</span>
+                <span class="btn-collect-text">수집 시작</span>
+                <div class="btn-loader" id="collect-loader" style="display:none"></div>
+              </button>
+            </form>
+          </div>
+
+          <!-- Collect Result / Log -->
+          <div class="collect-result-card">
+            <h3 class="form-title">📊 수집 결과 로그</h3>
+            <div class="log-terminal" id="collect-log">
+              <div class="log-line log-system">시스템 대기 중... 수집 시작을 눌러주세요.</div>
+            </div>
+
+            <div class="result-summary" id="result-summary" style="display:none">
+              <div class="summary-item">
+                <span class="summary-icon">✅</span>
+                <div>
+                  <div class="summary-value" id="res-total">0</div>
+                  <div class="summary-label">총 수집</div>
+                </div>
+              </div>
+              <div class="summary-item">
+                <span class="summary-icon">🆕</span>
+                <div>
+                  <div class="summary-value" id="res-new">0</div>
+                  <div class="summary-label">신규 추가</div>
+                </div>
+              </div>
+              <div class="summary-item">
+                <span class="summary-icon">🔄</span>
+                <div>
+                  <div class="summary-value" id="res-update">0</div>
+                  <div class="summary-label">업데이트</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== BOOKMARKS VIEW ===== -->
+      <section class="view" id="view-bookmarks">
+        <div class="bookmarks-header">
+          <h3>⭐ 즐겨찾기 파트너 목록</h3>
+          <p>협업 후보로 저장한 인플루언서들을 관리합니다.</p>
+        </div>
+        <div class="bookmark-grid" id="bookmark-grid">
+          <div class="empty-state">즐겨찾기한 인플루언서가 없습니다.</div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Detail Modal -->
+  <div class="modal-overlay" id="detail-modal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <div>
+          <h2 class="modal-title" id="modal-title">—</h2>
+          <span class="modal-handle" id="modal-handle">—</span>
+        </div>
+        <div class="modal-header-right">
+          <span class="modal-platform-badge" id="modal-badge-platform">—</span>
+          <button class="modal-close" id="btn-close-modal">✕</button>
+        </div>
+      </div>
+
+      <div class="modal-body">
+        <div class="modal-info-grid">
+          <div class="modal-info-item">
+            <span class="modal-info-label">👥 팔로워</span>
+            <span class="modal-info-value" id="modal-followers">—</span>
+          </div>
+          <div class="modal-info-item">
+            <span class="modal-info-label">👁 평균 조회수</span>
+            <span class="modal-info-value" id="modal-views">—</span>
+          </div>
+          <div class="modal-info-item">
+            <span class="modal-info-label">🌏 국가</span>
+            <span class="modal-info-value" id="modal-country">—</span>
+          </div>
+          <div class="modal-info-item">
+            <span class="modal-info-label">📂 카테고리</span>
+            <span class="modal-info-value" id="modal-category">—</span>
+          </div>
+          <div class="modal-info-item">
+            <span class="modal-info-label">✉ 이메일</span>
+            <span class="modal-info-value" id="modal-email">—</span>
+          </div>
+          <div class="modal-info-item">
+            <span class="modal-info-label">🔗 링크</span>
+            <span class="modal-info-value"><a id="modal-url" href="#" target="_blank">프로필 보기</a></span>
+          </div>
+        </div>
+
+        <!-- Charts -->
+        <div class="modal-charts-row">
+          <div class="modal-chart-box">
+            <h4>팔로워 성별 분포</h4>
+            <canvas id="modal-chart-gender"></canvas>
+          </div>
+          <div class="modal-chart-box">
+            <h4>팔로워 연령 분포</h4>
+            <canvas id="modal-chart-age"></canvas>
+          </div>
+        </div>
+
+        <!-- Memo -->
+        <div class="modal-memo-section">
+          <label class="form-label">📝 메모</label>
+          <textarea id="modal-memo" class="modal-textarea" placeholder="협업 관련 메모를 입력하세요..."></textarea>
+          <div class="memo-actions">
+            <button class="btn-save-memo" id="btn-save-memo">저장</button>
+            <span class="memo-status" id="memo-save-status"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
