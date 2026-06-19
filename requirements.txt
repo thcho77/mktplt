@@ -1,3 +1,19 @@
-click>=8.0.0
-requests>=2.28.0
-pandas>=2.0.0
+# INFLUHUB — Python Dependencies
+# 설치: pip install -r requirements.txt
+
+# 핵심 (필수)
+requests>=2.31.0
+python-dotenv>=1.0.0
+
+# HTML 파싱 (@cosme, Naver Blog 프로필 스크래핑)
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
+
+# 비동기 HTTP (TikTok, Douyin)
+httpx>=0.27.0
+
+# X(Twitter) 수집 — 선택사항 (TWITTER_* 환경변수 설정 시 활성화)
+twscrape>=0.12.0
+
+# 小红书 수집 — 선택사항 (XHS_COOKIE 환경변수 설정 시 활성화)
+xhs>=0.2.6
