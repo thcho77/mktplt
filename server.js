@@ -4,7 +4,7 @@ import pg from 'pg';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
-
+import cron from 'node-cron';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -268,6 +268,27 @@ app.post('/api/search', async (req, res) => {
   } catch (err) {
     console.error('[Search] Error:', err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Start 3-hour interval automated collection batch job
+cron.schedule('0 */3 * * *', async () => {
+  console.log('[Cron] Starting automated batch collection (Every 3 hours)');
+  const params = {
+    platforms: ['naver_blog', 'instagram', 'facebook', 'youtube', 'threads', 'tiktok', 'twitter', 'cosme', 'douyin', 'xiaohongshu', 'bilibili'],
+    category: '패션',
+    niche: '패션',
+    followers_min: 5000,
+    followers_max: 10000000,
+    country: 'ALL'
+  };
+  
+  try {
+    const { summary, code } = await runCollector(params);
+    console.log(`[Cron] Batch collection finished. Exit Code: ${code}`);
+    console.log(`[Cron] Result: Total ${summary.total}, New ${summary.new_count}, Update ${summary.update_count}`);
+  } catch (err) {
+    console.error('[Cron] Batch collection failed:', err.message);
   }
 });
 

@@ -128,7 +128,7 @@ function renderPlatformChart(platforms) {
   state.platformChart = new Chart(ctx, {
     type: 'doughnut',
     data: {
-      labels: platforms.map(p => PLATFORM_LABELS[p.name] || p.name),
+      labels: platforms.map(p => `${PLATFORM_LABELS[p.name] || p.name} (${p.count}명)`),
       datasets: [{
         data: platforms.map(p => p.count),
         backgroundColor: platforms.map((_, i) => colors[i % colors.length] + 'CC'),
@@ -147,7 +147,7 @@ function renderPlatformChart(platforms) {
         },
         tooltip: {
           callbacks: {
-            label: (ctx) => ` ${ctx.label}: ${ctx.parsed}명`
+            label: (ctx) => ` ${ctx.label}`
           }
         }
       }
