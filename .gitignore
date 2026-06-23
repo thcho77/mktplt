@@ -1,0 +1,11 @@
+.env
+.env.*
+*.log
+__pycache__/
+*.pyc
+.DS_Store
+accounts.db
+*API Key.md
+*API*Key.md
+Resuming Influencer Data Workflow*.md
+*.md

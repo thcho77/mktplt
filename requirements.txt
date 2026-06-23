@@ -17,3 +17,9 @@ twscrape>=0.12.0
 
 # 小红书 수집 — 선택사항 (XHS_COOKIE 환경변수 설정 시 활성화)
 xhs>=0.2.6
+
+# Global Search Scraper
+duckduckgo-search>=6.1.0
+
+# LLM Keyword Generation
+google-generativeai>=0.5.0
