@@ -684,6 +684,52 @@ async function deleteInfluencer(id) {
   }
 }
 
+// ---- Custom Keywords Logic ----
+let customKeywords = [];
+const keywordInput = $('collect-keyword-input');
+const keywordsContainer = $('collect-keywords-container');
+
+function renderKeywords() {
+  if (!keywordsContainer) return;
+  keywordsContainer.innerHTML = '';
+  customKeywords.forEach((kw, index) => {
+    const tag = document.createElement('div');
+    tag.className = 'keyword-tag';
+    tag.innerHTML = `
+      <span>${kw}</span>
+      <span class="keyword-remove" data-index="${index}">×</span>
+    `;
+    keywordsContainer.appendChild(tag);
+  });
+}
+
+if (keywordInput) {
+  keywordInput.addEventListener('keydown', (e) => {
+    // 한글 등 조합 중일 때 발생하는 중복 이벤트 방지
+    if (e.isComposing || e.keyCode === 229) return;
+    
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const val = keywordInput.value.trim();
+      if (val && !customKeywords.includes(val)) {
+        customKeywords.push(val);
+        renderKeywords();
+      }
+      keywordInput.value = '';
+    }
+  });
+}
+
+if (keywordsContainer) {
+  keywordsContainer.addEventListener('click', (e) => {
+    if (e.target.classList.contains('keyword-remove')) {
+      const idx = parseInt(e.target.getAttribute('data-index'), 10);
+      customKeywords.splice(idx, 1);
+      renderKeywords();
+    }
+  });
+}
+
 // ---- Collect Form ----
 $('collect-form').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -699,7 +745,8 @@ $('collect-form').addEventListener('submit', async (e) => {
     category: $('collect-category').value || '패션',
     followers_min: parseInt($('collect-min').value) || 5000,
     followers_max: parseInt($('collect-max').value) || 10000000,
-    country: $('collect-country').value || 'ALL'
+    country: $('collect-country').value || 'ALL',
+    keywords: customKeywords
   };
 
   const btn = $('btn-collect');

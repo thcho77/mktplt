@@ -1296,3 +1296,31 @@ select option { background: #1a1430; color: var(--text-primary); }
   .collect-layout { grid-template-columns: 1fr; }
   .charts-row { grid-template-columns: 1fr; }
 }
+/* Custom Keyword Tags */
+.keywords-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.keyword-tag {
+  background: rgba(147, 51, 234, 0.2);
+  border: 1px solid rgba(147, 51, 234, 0.4);
+  color: #e2d9f3;
+  padding: 4px 10px;
+  border-radius: 16px;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  animation: fadeIn 0.2s ease-out;
+}
+.keyword-remove {
+  cursor: pointer;
+  color: #a89bc2;
+  font-weight: bold;
+  transition: color 0.2s;
+}
+.keyword-remove:hover {
+  color: #ff4757;
+}

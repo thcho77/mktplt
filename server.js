@@ -322,17 +322,54 @@ app.post('/api/collect/stop', (req, res) => {
   }
 });
 
+
+
+// Helper function to save and merge custom keywords
+function mergeKeywords(newKeywords) {
+  if (!newKeywords || !Array.isArray(newKeywords) || newKeywords.length === 0) return [];
+  const keywordFile = 'custom_keywords.json';
+  let existing = [];
+  if (fs.existsSync(keywordFile)) {
+    try {
+      existing = JSON.parse(fs.readFileSync(keywordFile, 'utf8'));
+    } catch (e) {
+      console.error('Failed to read custom_keywords.json:', e);
+    }
+  }
+  const merged = [...new Set([...existing, ...newKeywords])];
+  fs.writeFileSync(keywordFile, JSON.stringify(merged, null, 2));
+  return merged;
+}
+
+// Helper function to read saved keywords
+function getSavedKeywords() {
+  const keywordFile = 'custom_keywords.json';
+  if (fs.existsSync(keywordFile)) {
+    try {
+      return JSON.parse(fs.readFileSync(keywordFile, 'utf8'));
+    } catch (e) {
+      return [];
+    }
+  }
+  return [];
+}
+
 // API: Collect real influencer data via Python script
 app.post('/api/collect', async (req, res) => {
-  const { platforms, followers_min, followers_max, niche, country, category } = req.body;
+  const { platforms, followers_min, followers_max, niche, country, category, keywords } = req.body;
   
+  if (keywords && keywords.length > 0) {
+    mergeKeywords(keywords);
+  }
+
   const params = {
     platforms: platforms || ['bilibili'],
     category: category || niche || '패션',
     niche: niche || category || '패션',
     followers_min: parseInt(followers_min, 10) || 5000,
     followers_max: parseInt(followers_max, 10) || 10000000,
-    country: country || 'ALL'
+    country: country || 'ALL',
+    keywords: keywords || []
   };
   
   console.log('[Collect] Starting collection with params:', params);
@@ -365,7 +402,11 @@ app.post('/api/collect', async (req, res) => {
 
 // API: Trigger search (try n8n first, fallback to Python direct)
 app.post('/api/search', async (req, res) => {
-  const { platforms, followers_min, followers_max, niche, country, category } = req.body;
+  const { platforms, followers_min, followers_max, niche, country, category, keywords } = req.body;
+
+  if (keywords && keywords.length > 0) {
+    mergeKeywords(keywords);
+  }
 
   const params = {
     platforms: platforms || ['bilibili'],
@@ -373,7 +414,8 @@ app.post('/api/search', async (req, res) => {
     niche: niche || category || '패션',
     followers_min: parseInt(followers_min, 10) || 5000,
     followers_max: parseInt(followers_max, 10) || 10000000,
-    country: country || 'ALL'
+    country: country || 'ALL',
+    keywords: keywords || []
   };
 
   // Python 스크립트로 직접 수집
@@ -413,6 +455,7 @@ cron.schedule('0 * * * *', async () => {
   console.log('[Cron] Starting automated batch collection (Every 1 hour) - excluding YouTube');
   const categories = ['패션', '뷰티', '먹방', '여행', '게임', '테크', '음악', '엔터', '일반', '교육', '동물'];
   const randomCategory = categories[Math.floor(Math.random() * categories.length)];
+  const autoKeywords = getSavedKeywords();
   
   const params = {
     platforms: ['naver_blog', 'instagram', 'facebook', 'threads', 'tiktok', 'twitter', 'cosme', 'douyin', 'xiaohongshu', 'bilibili'],
@@ -420,7 +463,8 @@ cron.schedule('0 * * * *', async () => {
     niche: randomCategory,
     followers_min: 1000,
     followers_max: 10000000,
-    country: 'ALL'
+    country: 'ALL',
+    keywords: autoKeywords
   };
   
   try {
@@ -437,6 +481,7 @@ cron.schedule('0 */3 * * *', async () => {
   console.log('[Cron] Starting automated batch collection specifically for YouTube (Every 3 hours)');
   const categories = ['패션', '뷰티', '먹방', '여행', '게임', '테크', '음악', '엔터', '일반', '교육', '동물'];
   const randomCategory = categories[Math.floor(Math.random() * categories.length)];
+  const autoKeywords = getSavedKeywords();
   
   const params = {
     platforms: ['youtube'],
@@ -444,7 +489,8 @@ cron.schedule('0 */3 * * *', async () => {
     niche: randomCategory,
     followers_min: 1000,
     followers_max: 10000000,
-    country: 'ALL'
+    country: 'ALL',
+    keywords: autoKeywords
   };
   
   try {

@@ -423,7 +423,11 @@ def is_brand_account(name, bio="", website=""):
         'amazon', 'espn', 'netflix', 'nike', 'adidas', 'apple', 'samsung', 
         'disney', 'marvel', 'national geographic', 'nba', 'zara', 'h&m',
         'hgtv', 'mtv', 'buzzfeed', 'billboard', 'bleacher report', 'the dodo',
-        'huffington post', 'animal planet', 'people magazine', 'ted', 'nasa', 'instagram'
+        'huffington post', 'animal planet', 'people magazine', 'ted', 'nasa', 'instagram',
+        # --- 연예인, 소속사, 엔터테인먼트 전용 키워드 ---
+        'actor', 'actress', 'singer', 'musician', 'artist', 'mgmt', 'management',
+        'entertainment', 'records', 'agency', 'booking', 'vevo', 'band',
+        '배우', '가수', '엔터테인먼트', '소속사', '에이전시', '보컬', '영화배우'
     ]
     
     # 2. 쇼핑몰 플랫폼 링크 (구조적 필터)
@@ -1870,9 +1874,15 @@ def main():
     followers_min = int(params.get('followers_min', 5000))
     followers_max = int(params.get('followers_max', 10_000_000))
     country       = params.get('country', 'ALL')
+    
+    custom_keywords = params.get('keywords', [])
+    if isinstance(custom_keywords, str):
+        custom_keywords = [k.strip() for k in custom_keywords.split(',') if k.strip()]
 
     log(f"수집 시작 ─ 플랫폼: {platforms}")
     log(f"카테고리: {category} | 팔로워: {followers_min:,}~{followers_max:,} | 국가: {country}")
+    if custom_keywords:
+        log(f"수동 입력 누적 키워드 반영: {custom_keywords}")
 
     all_results = []
 
@@ -1883,6 +1893,13 @@ def main():
             continue
 
         keywords = get_keywords(platform, category)
+        
+        # 사용자가 입력한 누적 수동 키워드를 병합 (중복 방지)
+        if custom_keywords:
+            for kw in custom_keywords:
+                if kw not in keywords:
+                    keywords.append(kw)
+
         log(f"[{platform.upper()}] 다중 키워드 검색 시작: {keywords}")
 
         for kw in keywords:
