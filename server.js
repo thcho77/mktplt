@@ -54,7 +54,7 @@ pool.query('SELECT NOW()', (err, res) => {
 
 // API: Get Influencers List with filters
 app.get('/api/influencers', async (req, res) => {
-  const { platform, category, minFollowers, maxFollowers, bookmarkedOnly, search } = req.query;
+  const { platform, category, country, minFollowers, maxFollowers, bookmarkedOnly, search } = req.query;
   
   let conditions = [];
   let params = [];
@@ -88,8 +88,14 @@ app.get('/api/influencers', async (req, res) => {
     conditions.push(`is_bookmarked = true`);
   }
 
+  if (country) {
+    conditions.push(`country = $${paramCount}`);
+    params.push(country);
+    paramCount++;
+  }
+
   if (search) {
-    conditions.push(`(account_name ILIKE $${paramCount} OR category ILIKE $${paramCount})`);
+    conditions.push(`(account_name ILIKE $${paramCount} OR category ILIKE $${paramCount} OR source_data::text ILIKE $${paramCount})`);
     params.push(`%${search}%`);
     paramCount++;
   }
@@ -162,6 +168,21 @@ app.put('/api/influencers/:id/memo', async (req, res) => {
     res.json(result.rows[0]);
   } catch (err) {
     console.error('Error updating memo:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// API: Update Metadata (Country, Category)
+app.put('/api/influencers/:id/metadata', async (req, res) => {
+  const { id } = req.params;
+  const { country, category } = req.body;
+
+  try {
+    const query = 'UPDATE influencers SET country = $1, category = $2, last_updated = NOW() WHERE id = $3 RETURNING *';
+    const result = await pool.query(query, [country, category, id]);
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Error updating metadata:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -396,8 +417,113 @@ app.post('/api/collect', async (req, res) => {
     console.error('[Collect] Error:', err.message);
     res.write(`data: ${JSON.stringify({ status: 'error', message: err.message })}\n\n`);
   }
-  
   res.end();
+});
+
+// API: Translate text using Gemini API
+app.post('/api/translate', async (req, res) => {
+  const { text, targetLang } = req.body;
+  if (!text || !targetLang) {
+    return res.status(400).json({ error: 'Text and targetLang are required.' });
+  }
+
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    return res.status(500).json({ error: 'GEMINI_API_KEY environment variable is not set.' });
+  }
+
+  const langNames = {
+    'ko': 'Korean (한국어)',
+    'en': 'English (영어)',
+    'ja': 'Japanese (일본어)',
+    'zh-CN': 'Chinese Simplified (중국어 간체)',
+    'zh-TW': 'Chinese Traditional (중국어 번체)',
+    'zh-HK': 'Chinese Traditional Hong Kong (중국어 번체 홍콩)',
+    'vi': 'Vietnamese (베트남어)',
+    'th': 'Thai (태국어)',
+    'id': 'Indonesian (인도네시아어)'
+  };
+
+  const targetLangName = langNames[targetLang] || targetLang;
+  const prompt = `Translate the following campaign proposal text into ${targetLangName}. 
+Preserve any URLs, placeholders, or HTML tags exactly as they are. 
+Output ONLY the final translated text without any conversational filler, quotes, introductory or outro text.
+
+Text to translate:
+${text}`;
+
+  const requestBody = {
+    contents: [
+      {
+        parts: [
+          {
+            text: prompt
+          }
+        ]
+      }
+    ]
+  };
+
+  const tryModel = async (modelName) => {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(requestBody)
+    });
+    
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Gemini API error (${modelName}): ${response.status} - ${errText}`);
+    }
+    
+    const data = await response.json();
+    if (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts && data.candidates[0].content.parts[0]) {
+      return data.candidates[0].content.parts[0].text;
+    }
+    throw new Error(`Invalid response format from Gemini API (${modelName})`);
+  };
+
+  try {
+    // Try Gemini 3.5 Flash first
+    const translatedText = await tryModel('gemini-3.5-flash');
+    res.json({ translatedText });
+  } catch (err35) {
+    console.warn('[Gemini 3.5 Flash failed, trying fallback 2.5 Flash]:', err35.message);
+    try {
+      // Fallback to Gemini 2.5 Flash
+      const translatedText = await tryModel('gemini-2.5-flash');
+      res.json({ translatedText });
+    } catch (err25) {
+      console.error('[Gemini translation failed]:', err25.message);
+      res.status(500).json({ error: err25.message });
+    }
+  }
+});
+
+// API: Send Campaign DM (Simulation)
+app.post('/api/campaign/send', async (req, res) => {
+  const { method, platform, influencer_ids, message, product_url, content_url } = req.body;
+  
+  if (!influencer_ids || influencer_ids.length === 0) {
+    return res.status(400).json({ success: false, error: '대상 인플루언서가 없습니다.' });
+  }
+
+  console.log(`[Campaign] 발송 요청 시작. 플랫폼: ${platform}, 대상: ${influencer_ids.length}명, 방식: ${method}`);
+  console.log(`[Campaign] 메시지: ${message.slice(0, 50)}...`);
+  console.log(`[Campaign] 상품URL: ${product_url}, 콘텐츠URL: ${content_url}`);
+
+  // 시뮬레이션: 약간의 딜레이 후 성공 응답 반환
+  setTimeout(() => {
+    console.log(`[Campaign] 시뮬레이션 모드 - 발송 완료 처리`);
+    res.json({
+      success: true,
+      sent_count: influencer_ids.length,
+      mode: 'simulation'
+    });
+  }, 1500);
 });
 
 // API: Trigger search (try n8n first, fallback to Python direct)

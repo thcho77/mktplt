@@ -58,7 +58,8 @@ function switchView(name) {
     dashboard: ['대시보드', '인플루언서 현황 및 통계 요약'],
     influencers: ['인플루언서 목록', '전체 수집된 인플루언서 데이터 조회'],
     collect: ['데이터 수집', '플랫폼별 인플루언서 검색 및 수집'],
-    bookmarks: ['즐겨찾기', '협업 후보로 저장한 인플루언서 목록']
+    bookmarks: ['즐겨찾기', '협업 후보로 저장한 인플루언서 목록'],
+    campaign: ['캠페인 제안', '인플루언서에게 제안 메시지(DM/Email) 발송']
   };
   $('page-title').textContent = titles[name][0];
   $('page-subtitle').textContent = titles[name][1];
@@ -233,6 +234,7 @@ function renderRecent() {
 function applyFilters() {
   const platform = $('filter-platform').value;
   const category = $('filter-category').value;
+  const country = $('filter-country')?.value;
   const minF = parseInt($('filter-min-followers').value) || 0;
   const maxF = parseInt($('filter-max-followers').value) || Infinity;
   const search = $('filter-search').value.toLowerCase().trim();
@@ -240,6 +242,7 @@ function applyFilters() {
   state.filtered = state.influencers.filter(inf => {
     if (platform && inf.platform !== platform) return false;
     if (category && inf.category !== category) return false;
+    if (country && inf.country !== country) return false;
     if (inf.follower_count < minF) return false;
     if (inf.follower_count > maxF) return false;
     if (state.bookmarkFilter && !inf.is_bookmarked) return false;
@@ -270,6 +273,8 @@ $('btn-apply-filter').addEventListener('click', applyFilters);
 $('btn-reset-filter').addEventListener('click', () => {
   $('filter-platform').value = '';
   $('filter-category').value = '';
+  const filterCountry = $('filter-country');
+  if (filterCountry) filterCountry.value = '';
   $('filter-min-followers').value = '';
   $('filter-max-followers').value = '';
   $('filter-search').value = '';
@@ -449,11 +454,34 @@ function openModal(id) {
   $('modal-badge-platform').textContent = PLATFORM_LABELS[inf.platform] || inf.platform;
   $('modal-followers').textContent = fmtNum(inf.follower_count);
   $('modal-views').textContent = fmtNum(inf.avg_view_count);
-  $('modal-country').textContent = inf.country || '—';
-  $('modal-category').textContent = inf.category || '—';
+  $('modal-country').value = inf.country || '';
+  $('modal-category').value = inf.category || '기타';
   $('modal-email').textContent = inf.email || '—';
   $('modal-memo').value = inf.memo || '';
   $('memo-save-status').textContent = '';
+
+  // Handle metadata updates
+  const updateMetadata = async () => {
+    const newCountry = $('modal-country').value;
+    const newCategory = $('modal-category').value;
+    try {
+      const res = await fetch(`${API}/api/influencers/${inf.id}/metadata`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ country: newCountry, category: newCategory })
+      });
+      if (!res.ok) throw new Error('수정 실패');
+      inf.country = newCountry;
+      inf.category = newCategory;
+      applyFilters(); // re-filter and re-render main table if it was updated
+    } catch (err) {
+      console.error(err);
+      alert('데이터 수정 중 오류가 발생했습니다.');
+    }
+  };
+
+  $('modal-country').onchange = updateMetadata;
+  $('modal-category').onchange = updateMetadata;
 
   const urlEl = $('modal-url');
   if (inf.account_url) {
@@ -938,6 +966,226 @@ function escHtml(str) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 }
+
+// ---- Campaign Proposal Logic ----
+let campaignSelectedIds = new Set();
+let campaignTargetList = [];
+
+// Load target influencers
+$('btn-campaign-load')?.addEventListener('click', async () => {
+  const platform = $('campaign-platform-filter').value;
+  const category = $('campaign-category-filter').value;
+  const country = $('campaign-country-filter')?.value;
+  const keyword = $('campaign-keyword-filter').value;
+  
+  const countEl = $('campaign-target-count');
+  if (countEl) countEl.textContent = '0';
+  
+  const tbody = $('campaign-target-tbody');
+  tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; padding:20px; color:#a89bc2;">⏳ 실제 DB에서 데이터를 불러오는 중...</td></tr>`;
+  
+  try {
+    const params = new URLSearchParams();
+    if (platform) params.append('platform', platform);
+    if (category) params.append('category', category);
+    if (country && country !== 'ALL') params.append('country', country);
+    if (keyword) params.append('search', keyword);
+    
+    // DB에서 직접 필터링된 데이터 호출
+    const res = await fetch(`${API}/api/influencers?${params.toString()}`);
+    if (!res.ok) throw new Error('API 응답 오류');
+    
+    const dbData = await res.json();
+    
+    // 플랫폼 필터가 파라미터로 동작하지 않을 경우를 대비해 한 번 더 클라이언트 필터링
+    campaignTargetList = dbData.filter(i => {
+      let pass = true;
+      if (platform) pass = pass && (i.platform === platform);
+      if (country) pass = pass && (i.country === country);
+      return pass;
+    });
+    campaignSelectedIds.clear();
+    
+    if (countEl) countEl.textContent = campaignTargetList.length;
+    
+    if (campaignTargetList.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; padding:20px; color:#a89bc2;">선택한 조건에 맞는 인플루언서가 DB에 없습니다.</td></tr>`;
+      if ($('campaign-pagination')) $('campaign-pagination').innerHTML = '';
+      return;
+    }
+    
+    campaignCurrentPage = 1;
+    renderCampaignPage(1);
+    
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; padding:20px; color:#ef4444;">❌ DB 조회 실패: ${err.message}</td></tr>`;
+  }
+});
+
+let campaignCurrentPage = 1;
+const CAMPAIGN_PAGE_SIZE = 50;
+
+function renderCampaignPage(page) {
+  const tbody = $('campaign-target-tbody');
+  const pag = $('campaign-pagination');
+  if (!tbody) return;
+  
+  const total = campaignTargetList.length;
+  const maxPage = Math.ceil(total / CAMPAIGN_PAGE_SIZE) || 1;
+  campaignCurrentPage = Math.max(1, Math.min(page, maxPage));
+  
+  const start = (campaignCurrentPage - 1) * CAMPAIGN_PAGE_SIZE;
+  const end = start + CAMPAIGN_PAGE_SIZE;
+  const pageData = campaignTargetList.slice(start, end);
+  
+  tbody.innerHTML = pageData.map(inf => `
+    <tr>
+      <td><input type="checkbox" class="campaign-checkbox" data-id="${inf.id}" ${campaignSelectedIds.has(String(inf.id)) ? 'checked' : ''}></td>
+      <td><span class="platform-badge ${inf.platform}">${PLATFORM_LABELS[inf.platform] || inf.platform}</span></td>
+      <td><strong class="clickable-account" onclick="openModal(${inf.id})" style="cursor: pointer; text-decoration: underline; color: #a78bfa;" title="상세 정보 보기">${escHtml(inf.account_name)}</strong></td>
+      <td>${escHtml(inf.category || '')}</td>
+    </tr>
+  `).join('');
+  
+  // 상태 동기화
+  const checkAll = $('campaign-check-all');
+  if (checkAll) {
+    const boxes = document.querySelectorAll('.campaign-checkbox');
+    checkAll.checked = boxes.length > 0 && Array.from(boxes).every(b => b.checked);
+  }
+  
+  // Render pagination controls
+  if (pag) {
+    if (maxPage <= 1) {
+      pag.innerHTML = '';
+      return;
+    }
+    
+    let html = `<button class="btn-page" onclick="renderCampaignPage(${campaignCurrentPage - 1})" ${campaignCurrentPage === 1 ? 'disabled' : ''}>◀</button>`;
+    
+    // Simple windowing for 10 pages
+    let startP = Math.max(1, campaignCurrentPage - 4);
+    let endP = Math.min(maxPage, startP + 9);
+    if (endP - startP < 9) startP = Math.max(1, endP - 9);
+    
+    for (let i = startP; i <= endP; i++) {
+      html += `<button class="btn-page ${i === campaignCurrentPage ? 'active' : ''}" onclick="renderCampaignPage(${i})">${i}</button>`;
+    }
+    
+    html += `<button class="btn-page" onclick="renderCampaignPage(${campaignCurrentPage + 1})" ${campaignCurrentPage === maxPage ? 'disabled' : ''}>▶</button>`;
+    pag.innerHTML = html;
+  }
+}
+
+// Select All toggle
+$('campaign-check-all')?.addEventListener('change', (e) => {
+  const isChecked = e.target.checked;
+  const checkboxes = document.querySelectorAll('.campaign-checkbox');
+  checkboxes.forEach(cb => {
+    cb.checked = isChecked;
+    const id = parseInt(cb.getAttribute('data-id'), 10);
+    if (isChecked) campaignSelectedIds.add(id);
+    else campaignSelectedIds.delete(id);
+  });
+});
+
+// Individual checkbox toggle
+$('campaign-target-tbody')?.addEventListener('change', (e) => {
+  if (e.target.classList.contains('campaign-checkbox')) {
+    const id = parseInt(e.target.getAttribute('data-id'), 10);
+    if (e.target.checked) campaignSelectedIds.add(id);
+    else campaignSelectedIds.delete(id);
+  }
+});
+
+// Submit Campaign
+$('campaign-form')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  
+  if (campaignSelectedIds.size === 0) {
+    alert('대상 인플루언서를 최소 1명 이상 선택해주세요.');
+    return;
+  }
+  
+  const sendMethod = document.querySelector('input[name="send_method"]:checked').value;
+  const message = $('campaign-message').value;
+  const productUrl = $('campaign-product-url').value;
+  const contentUrl = $('campaign-content-url').value;
+  const platform = $('campaign-platform-filter').value;
+  
+  const payload = {
+    method: sendMethod,
+    platform,
+    influencer_ids: Array.from(campaignSelectedIds),
+    message,
+    product_url: productUrl,
+    content_url: contentUrl
+  };
+  
+  const btn = $('btn-campaign-send');
+  const resultDiv = $('campaign-result');
+  btn.disabled = true;
+  btn.textContent = '발송 중...';
+  resultDiv.innerHTML = '<span style="color:#a89bc2;">발송 진행 중입니다... (시뮬레이션 모드)</span>';
+  
+  try {
+    const res = await fetch(`${API}/api/campaign/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    
+    const data = await res.json();
+    if (res.ok && data.success) {
+      resultDiv.innerHTML = `<span style="color:#10b981;">✅ 발송 성공! (총 ${data.sent_count}건 시뮬레이션 완료)</span>`;
+    } else {
+      resultDiv.innerHTML = `<span style="color:#ef4444;">❌ 오류: ${data.error}</span>`;
+    }
+  } catch (err) {
+    resultDiv.innerHTML = `<span style="color:#ef4444;">❌ 요청 실패: ${err.message}</span>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'DM 발송';
+  }
+});
+
+// ---- Translation Logic ----
+$('btn-campaign-translate')?.addEventListener('click', async () => {
+  const text = $('campaign-message').value.trim();
+  const targetLang = $('campaign-translate-lang').value;
+  
+  if (!text) {
+    alert('번역할 제안 문구를 입력해주세요.');
+    return;
+  }
+  
+  const btn = $('btn-campaign-translate');
+  const progress = $('translate-progress');
+  
+  btn.disabled = true;
+  if (progress) progress.style.display = 'flex';
+  
+  try {
+    const res = await fetch(`${API}/api/translate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, targetLang })
+    });
+    
+    const data = await res.json();
+    if (res.ok && data.translatedText) {
+      $('campaign-message').value = data.translatedText;
+    } else {
+      alert(`번역 오류: ${data.error || '알 수 없는 오류가 발생했습니다.'}`);
+    }
+  } catch (err) {
+    console.error('Translation failed:', err);
+    alert(`번역 요청 실패: ${err.message}`);
+  } finally {
+    btn.disabled = false;
+    if (progress) progress.style.display = 'none';
+  }
+});
 
 // ---- Init ----
 document.addEventListener('DOMContentLoaded', () => {

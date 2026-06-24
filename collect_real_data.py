@@ -35,6 +35,10 @@ import os
 import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
+try:
+    from playwright.sync_api import sync_playwright
+except ImportError:
+    sync_playwright = None
 
 # ─────────────────────────────────────────
 # .env 로드 (python-dotenv 또는 직접 파싱)
@@ -417,7 +421,7 @@ def is_brand_account(name, bio="", website=""):
     brand_keywords = [
         'official', 'brand', 'store', 'shop', 'company', 'inc.', 'ltd.', 
         '공식', '스토어', '매장', '브랜드', '주식회사', '대표계정',
-        '公式', 'ストア', 'ショップ', 'ブランド', '株式会社', '企業',
+        '公式', 'ストア', 'ショップ', 'ブランド', '株式会社', '企業', 'PR', '担当', 'メーカー', '編集部', 'オフィシャル', '公認', 'スタッフ',
         'news', 'media', 'tv', 'broadcast', 'magazine', 'daily', 'times',
         '뉴스', '방송', '매거진', '일보', '신문', '저널',
         'amazon', 'espn', 'netflix', 'nike', 'adidas', 'apple', 'samsung', 
@@ -909,7 +913,7 @@ def collect_instagram(keyword, category, followers_min, followers_max):
                                 'instagram', username, f"https://www.instagram.com/{username}",
                                 map_category(bio, category), 'KR', followers, 0, extract_email(bio),
                                 audience_demo={'gender': {'male': 35, 'female': 65}, 'age': {'13-17': 12, '18-24': 45, '25-34': 30, '35-44': 10, '45+': 3}},
-                                source_data={'source': 'instagram_graph_api', 'owner_id': owner_id, 'crawled_at': datetime.now(timezone.utc).isoformat()}
+                                source_data={'source': 'instagram_graph_api', 'owner_id': owner_id, 'bio': bio, 'crawled_at': datetime.now(timezone.utc).isoformat()}
                             ))
                             if len(results) >= 100:
                                 break
@@ -959,7 +963,7 @@ def collect_instagram(keyword, category, followers_min, followers_max):
                                 'instagram', username, f"https://www.instagram.com/{username}",
                                 map_category(bio, category), 'ALL', followers, 0, extract_email(bio),
                                 audience_demo={'gender': {'male': 35, 'female': 65}, 'age': {'13-17': 12, '18-24': 45, '25-34': 30, '35-44': 10, '45+': 3}},
-                                source_data={'source': 'naver_web_ig_fallback', 'crawled_at': datetime.now(timezone.utc).isoformat()}
+                                source_data={'source': 'naver_web_ig_fallback', 'bio': bio, 'crawled_at': datetime.now(timezone.utc).isoformat()}
                             ))
                             if len(results) >= 100:
                                 break
@@ -1035,7 +1039,7 @@ def collect_instagram(keyword, category, followers_min, followers_max):
                                     map_category(item.get('biography', ''), category), 'ALL', f_count, 0,
                                     extract_email(item.get('biography', '')),
                                     audience_demo={'gender': {'male': 35, 'female': 65}, 'age': {'13-17': 12, '18-24': 45, '25-34': 30, '35-44': 10, '45+': 3}},
-                                    source_data={'source': 'apify_ig_scraper', 'crawled_at': datetime.now(timezone.utc).isoformat()}
+                                    source_data={'source': 'apify_ig_scraper', 'bio': bio, 'crawled_at': datetime.now(timezone.utc).isoformat()}
                                 ))
                 except Exception as e:
                     log(f"Apify 스크래핑 실패, 검색 데이터로 대체: {e}")
@@ -1579,103 +1583,106 @@ def collect_twitter(keyword, category, followers_min, followers_max):
 # ─────────────────────────────────────────
 # 10. @cosme (beautist 스크래핑 + 시드 데이터)
 # ─────────────────────────────────────────
-
-
+_cosme_scraped = False
 
 def collect_cosme(keyword, category, followers_min, followers_max):
-    """@cosme 뷰티 인플루언서 수집
-    beautist 랭킹/신착 페이지 스크래핑 → 실패 시 시드 데이터 사용
     """
-    try:
-        import requests as _req
-        from bs4 import BeautifulSoup
-    except ImportError:
-        skip('@cosme', 'requests / beautifulsoup4 미설치')
+    @cosme (일본 뷰티 플랫폼) - Beautist 섹션 스크래핑 및 Playwright 검증
+    """
+    global _cosme_scraped
+    if _cosme_scraped:
         return []
+    _cosme_scraped = True
 
+    import requests
+    from bs4 import BeautifulSoup
+    
     results = []
-    session = _req.Session()
+    
+    session = requests.Session()
     session.headers.update({
-        'User-Agent': DEFAULT_UA,
-        'Accept-Language': 'ja-JP,ja;q=0.9,en;q=0.8',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Referer': 'https://www.cosme.net/',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     })
 
-    # 1차: beautist 랭킹/신착 페이지에서 아티클 파싱 (매번 새로운 인플루언서 발굴을 위해 랜덤 페이지 접근)
-    import random
+    # Playwright Initialization
+    playwright_ctx = None
+    browser_instance = None
+    if sync_playwright:
+        try:
+            playwright_ctx = sync_playwright().start()
+            browser_instance = playwright_ctx.chromium.launch(headless=True)
+        except Exception as e:
+            print(f"[@cosme] Failed to initialize Playwright: {e}", file=sys.stderr)
+
+    # 신규 아티클의 페이지네이션 고려하여 임의의 페이지들을 병렬적으로 크롤링 (간이 구현)
     page1 = random.randint(1, 10)
-    page2 = random.randint(1, 10)
-    scrape_urls = list(set([
-        'https://www.cosme.net/beautist/ranking/article/all', # 랭킹은 1페이지만 지원 (리다이렉트 방지)
+    page2 = page1 + random.randint(1, 10)
+    page3 = page2 + random.randint(1, 10)
+    
+    scrape_urls = [
+        'https://www.cosme.net/beautist/ranking/article/all',
         f'https://www.cosme.net/beautist/new-article/all?page={page1}',
         f'https://www.cosme.net/beautist/new-article/all?page={page2}',
-    ]))
+        f'https://www.cosme.net/beautist/new-article/all?page={page3}',
+    ]
+    
     for url in scrape_urls:
         try:
             resp = session.get(url, timeout=12)
+            if resp.status_code == 503 or "メンテナンス" in resp.text or "MAINTENANCE" in resp.text:
+                log(f"[@cosme] @cosme is currently under maintenance (HTTP {resp.status_code}). Skipping.", "WARN")
+                break
             if resp.status_code != 200:
                 continue
             soup = BeautifulSoup(resp.text, 'html.parser')
 
-            # beautist 아티클 카드에서 작성자 링크 추출
-            # 패턴: /beautist/article/ARTICLEID 형식
             article_links = soup.select('a[href*="/beautist/article/"]')
             author_ids = set()
-            for lnk in article_links[:100]:
+            for lnk in article_links:
                 href = lnk.get('href', '')
-                # 아티클 ID 추출 → 이후 beautist 작성자 페이지 구성
                 art_m = re.search(r'/beautist/article/(\d+)', href)
                 if art_m:
                     author_ids.add(art_m.group(1))
 
             for art_id in list(author_ids)[:50]:
                 try:
-                    art_resp = session.get(
-                        f'https://www.cosme.net/beautist/article/{art_id}',
-                        timeout=10
-                    )
+                    art_resp = session.get(f'https://www.cosme.net/beautist/article/{art_id}', timeout=10)
                     art_soup = BeautifulSoup(art_resp.text, 'html.parser')
-                    # 작성자 정보 추출 (일반 유저 및 브랜드 담당자 공통)
                     author_link = art_soup.select_one('.author-info a')
-                    author_name_el = art_soup.select_one('[class*="author"] [class*="name"], [class*="writer"]')
-                    if not author_link:
-                        continue
+                    if not author_link: continue
                     author_href = author_link.get('href', '')
-                    if not author_href.startswith('http'):
-                        author_href = 'https://www.cosme.net' + author_href
-                    author_name = (author_link.get_text(strip=True) or
-                                   (author_name_el.get_text(strip=True) if author_name_el else '') or
-                                   author_href.split('/')[-1])
-                    if not author_name:
+                    if not author_href.startswith('http'): author_href = 'https://www.cosme.net' + author_href
+                    author_name = author_link.get_text(strip=True)
+                    
+                    if '/brand/' in author_href or is_brand_account(author_name):
                         continue
                         
-                    author_desc_el = art_soup.select_one('.author-desc')
-                    author_desc = author_desc_el.get_text(strip=True) if author_desc_el else ""
-                    if is_brand_account(author_name, author_desc):
-                        continue
+                    # Playwright를 활용해 실제 팔로워 수 가져오기
+                    fc = 0
+                    if browser_instance:
+                        try:
+                            page = browser_instance.new_page()
+                            page.goto(author_href, timeout=15000)
+                            text = page.locator('body').inner_text()
+                            m = re.search(r'フォロワー\s*([\d,]+)', text)
+                            if m: fc = int(m.group(1).replace(',', ''))
+                            page.close()
+                        except:
+                            pass
+                            
+                    if followers_min <= fc <= followers_max:
+                        results.append(make_record('cosme', author_name, author_href, category, 'JP', fc, 0))
                         
-                    fc = max(followers_min, min(followers_max, 20000))  # 추정치
-                    results.append(make_record(
-                        'cosme', author_name, author_href,
-                        '뷰티', 'JP', fc, 0,
-                        gender='female',
-                        audience_demo={'gender': {'male': 15, 'female': 85},
-                                       'age': {'18-24': 30, '25-34': 42, '35-44': 22, '45+': 6}},
-                        source_data={'source': 'cosme_beautist_scraping', 'article_id': art_id,
-                                     'crawled_at': datetime.now(timezone.utc).isoformat()}
-                    ))
-                    time.sleep(0.5)
-                    if len(results) >= 100:
-                        break
                 except Exception as e:
                     print(f"[@cosme] article {art_id}: {e}", file=sys.stderr)
 
         except Exception as e:
-            print(f"[@cosme] {url}: {e}", file=sys.stderr)
-        time.sleep(1.5)
+            print(f"[@cosme] Failed to fetch {url}: {e}", file=sys.stderr)
 
-
+    if browser_instance:
+        browser_instance.close()
+    if playwright_ctx:
+        playwright_ctx.stop()
 
     return results
 
@@ -1906,6 +1913,41 @@ def main():
             try:
                 recs = collector(kw, category, followers_min, followers_max)
                 if recs:
+                    for r in recs:
+                        if "source_data" not in r:
+                            r["source_data"] = {}
+                        r["source_data"]["search_keyword"] = kw
+                        
+                        # 인스타그램 국적 추정 (Graph API 미제공 및 Naver 우회로 인한 정보 부족 대응)
+                        if r['platform'] == 'instagram':
+                            if country != 'ALL':
+                                # 사용자가 명시적으로 국가를 지정한 경우 우선 적용
+                                r['country'] = country
+                            else:
+                                # 'ALL'인 경우 텍스트 기반 국적 추정
+                                bio_text = ""
+                                if 'source_data' in r and 'bio' in r['source_data']:
+                                    bio_text = r['source_data']['bio']
+                                # source_data에 bio가 없다면 키워드를 힌트로 사용
+                                text_to_check = bio_text or kw or r['account_name']
+                                
+                                # 한글 포함 확인 (가-힣)
+                                if re.search(r'[가-힣]', text_to_check):
+                                    r['country'] = 'KR'
+                                # 일본어 포함 확인 (히라가나, 가타카나)
+                                elif re.search(r'[\u3040-\u309F\u30A0-\u30FF]', text_to_check):
+                                    r['country'] = 'JP'
+                                # 중국어 포함 확인 (기본 한자 영역)
+                                elif re.search(r'[\u4E00-\u9FFF]', text_to_check):
+                                    r['country'] = 'CN'
+                                else:
+                                    # 추정 불가 시, Naver 검색 기반 수집이었으면 KR로 기본 할당
+                                    fallback_src = r.get('source_data', {}).get('source', '')
+                                    if 'naver' in fallback_src:
+                                        r['country'] = 'KR'
+                                    else:
+                                        r['country'] = 'ALL'
+
                     log(f"  └ '{kw}' 키워드로 {len(recs)}명 수집 완료")
                     all_results.extend(recs)
             except Exception as e:

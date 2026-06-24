@@ -1,6 +1,7 @@
 import pg from 'pg';
 import fs from 'fs';
 import path from 'path';
+import puppeteer from 'puppeteer';
 
 // Read .env
 const envPath = path.join(process.cwd(), '.env');
@@ -180,28 +181,39 @@ async function verifyBilibili(row) {
   return false;
 }
 
-async function verifyCosme(row) {
-  try {
-    const m = row.account_url.match(/user_id\/(\d+)/);
-    if (m) {
-      const res = await fetch(`https://my.cosme.net/open/profile/show/user_id/${m[1]}`, {
-        headers: { 'User-Agent': 'Mozilla/5.0' }
-      });
-      const html = await res.text();
-      const foll_m = html.match(/follower[\s\S]*?(\d+)/);
-      if (foll_m) {
-        const count = parseInt(foll_m[1]);
-        await pool.query("UPDATE influencers SET follower_count = $1, verified_at = NOW(), verification_status = 'verified' WHERE id = $2", [count, row.id]);
-        return true;
-      }
-    }
-  } catch (e) {}
+async function verifyUnsupported(row) {
+  // Mark as failed/unsupported to prevent repeated attempts
   await pool.query("UPDATE influencers SET verified_at = NOW(), verification_status = 'failed' WHERE id = $1", [row.id]);
   return false;
 }
 
-async function verifyUnsupported(row) {
-  // Mark as failed/unsupported to prevent repeated attempts
+async function verifyCosme(browser, row) {
+  try {
+    const page = await browser.newPage();
+    await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+    await page.goto(row.account_url, { waitUntil: 'domcontentloaded', timeout: 15000 });
+    
+    const text = await page.evaluate(() => document.body.innerText);
+    await page.close();
+    
+    let count = 0;
+    for (const line of text.split('\n')) {
+      if (line.includes('フォロワー')) {
+        const m = line.match(/フォロワー\s*([\d,]+)/);
+        if (m) {
+          count = parseNumber(m[1]);
+          break;
+        }
+      }
+    }
+    
+    if (count > 0) {
+      await pool.query("UPDATE influencers SET follower_count = $1, verified_at = NOW(), verification_status = 'verified' WHERE id = $2", [count, row.id]);
+      return true;
+    }
+  } catch (e) {
+    console.error(`[Cosme] Error verifying ${row.account_url}:`, e.message);
+  }
   await pool.query("UPDATE influencers SET verified_at = NOW(), verification_status = 'failed' WHERE id = $1", [row.id]);
   return false;
 }
@@ -289,11 +301,23 @@ async function run() {
     if (grouped['cosme']) {
       const cosmes = grouped['cosme'];
       console.log(`[Processing] Cosme: ${cosmes.length} accounts`);
-      for (const row of cosmes) {
-        const success = await verifyCosme(row);
-        if (success) totalUpdated++;
+      let browser = null;
+      try {
+        browser = await puppeteer.launch({ 
+          headless: 'new',
+          args: ['--no-sandbox', '--disable-setuid-sandbox']
+        });
+        for (const row of cosmes) {
+          const success = await verifyCosme(browser, row);
+          if (success) totalUpdated++;
+        }
+      } catch (e) {
+        console.error("[Cosme] Browser launch error:", e);
+      } finally {
+        if (browser) await browser.close();
       }
     }
+
 
     // Unsupported platforms (X, Xiaohongshu, Douyin, Facebook, Threads)
     const unsupported = ['twitter', 'xiaohongshu', 'douyin', 'facebook', 'threads'];
