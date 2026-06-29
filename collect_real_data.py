@@ -33,6 +33,7 @@ import subprocess
 import sys
 import os
 import asyncio
+import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 try:
@@ -188,7 +189,9 @@ def get_keywords(platform, category):
             return dynamic_kws[:6]
             
         try:
-            import google.generativeai as genai
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                import google.generativeai as genai
             genai.configure(api_key=gemini_key)
             # 빠르고 저렴한 flash 모델 사용
             model = genai.GenerativeModel('gemini-2.5-flash')
@@ -509,7 +512,7 @@ def make_record(platform, name, url, category, country, followers, avg_views,
 
 def log(msg, level='INFO'):
     ts = datetime.now().strftime('%H:%M:%S')
-    print(f"[{ts}][{level}] {msg}")
+    print(f"[{ts}][{level}] {msg}", flush=True)
 
 def skip(platform, reason):
     log(f"{platform}: {reason} → 건너뜀", 'SKIP')
@@ -1587,7 +1590,7 @@ _cosme_scraped = False
 
 def collect_cosme(keyword, category, followers_min, followers_max):
     """
-    @cosme (일본 뷰티 플랫폼) - Beautist 섹션 스크래핑 및 Playwright 검증
+    @cosme (일본 뷰티 플랫폼) - Beautist 섹션 스크래핑 (병렬화 및 다중 페이지 수집)
     """
     global _cosme_scraped
     if _cosme_scraped:
@@ -1596,94 +1599,138 @@ def collect_cosme(keyword, category, followers_min, followers_max):
 
     import requests
     from bs4 import BeautifulSoup
-    
-    results = []
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     
     session = requests.Session()
+    adapter = requests.adapters.HTTPAdapter(pool_connections=25, pool_maxsize=30)
+    session.mount('http://', adapter)
+    session.mount('https://', adapter)
     session.headers.update({
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     })
 
-    # Playwright Initialization
-    playwright_ctx = None
-    browser_instance = None
-    if sync_playwright:
-        try:
-            playwright_ctx = sync_playwright().start()
-            browser_instance = playwright_ctx.chromium.launch(headless=True)
-        except Exception as e:
-            print(f"[@cosme] Failed to initialize Playwright: {e}", file=sys.stderr)
+    effective_min = max(100, followers_min // 5)
+    log(f"[@cosme] 수집 임계값 조정: 원본 {followers_min} -> 보정 {effective_min}")
 
-    # 신규 아티클의 페이지네이션 고려하여 임의의 페이지들을 병렬적으로 크롤링 (간이 구현)
-    page1 = random.randint(1, 10)
-    page2 = page1 + random.randint(1, 10)
-    page3 = page2 + random.randint(1, 10)
+    existing_authors = set()
+    try:
+        sql = "SELECT account_name FROM influencers WHERE platform='cosme';"
+        res = subprocess.run(
+            ['docker', 'exec', '-i', DB_CONTAINER, 'psql', '-U', DB_USER, '-d', DB_NAME, '-t', '-c', sql],
+            capture_output=True, text=True, timeout=10
+        )
+        for line in res.stdout.split('\n'):
+            name = line.strip()
+            if name:
+                existing_authors.add(name)
+        log(f"[@cosme] DB에서 기존 수집된 인플루언서 {len(existing_authors)}명 확인 완료. (조회 시 건너뜀)")
+    except Exception as e:
+        log(f"[@cosme] DB 캐싱 실패: {e}", "WARN")
+
+    # 수집 대상 URL 리스트 확장
+    scrape_urls = []
+    # 랭킹 1~5페이지
+    for p in range(1, 6):
+        scrape_urls.append(f'https://www.cosme.net/beautist/ranking/article/all?page={p}')
+    # 딥 페이징 한계를 극복하기 위해 무한 페이징이 가능한 '카테고리' 탐색 도입
+    cosme_categories = [1036, 1043, 1048, 1054, 1058, 1068, 1073, 1080, 1086]
+    for _ in range(50):
+        c = random.choice(cosme_categories)
+        p = random.randint(1, 2000)
+        scrape_urls.append(f'https://www.cosme.net/beautist/category/{c}?page={p}')
     
-    scrape_urls = [
-        'https://www.cosme.net/beautist/ranking/article/all',
-        f'https://www.cosme.net/beautist/new-article/all?page={page1}',
-        f'https://www.cosme.net/beautist/new-article/all?page={page2}',
-        f'https://www.cosme.net/beautist/new-article/all?page={page3}',
-    ]
+    log(f"[@cosme] {len(scrape_urls)}개 리스트 페이지 병렬 수집 시작...")
     
-    for url in scrape_urls:
+    author_ids = set()
+    
+    def fetch_list_page(url):
         try:
-            resp = session.get(url, timeout=12)
+            resp = session.get(url, timeout=10)
             if resp.status_code == 503 or "メンテナンス" in resp.text or "MAINTENANCE" in resp.text:
-                log(f"[@cosme] @cosme is currently under maintenance (HTTP {resp.status_code}). Skipping.", "WARN")
-                break
+                return []
             if resp.status_code != 200:
-                continue
+                return []
             soup = BeautifulSoup(resp.text, 'html.parser')
-
-            article_links = soup.select('a[href*="/beautist/article/"]')
-            author_ids = set()
-            for lnk in article_links:
+            links = soup.select('a[href*="/beautist/article/"]')
+            page_art_ids = []
+            for lnk in links:
                 href = lnk.get('href', '')
                 art_m = re.search(r'/beautist/article/(\d+)', href)
                 if art_m:
-                    author_ids.add(art_m.group(1))
+                    page_art_ids.append(art_m.group(1))
+            return page_art_ids
+        except:
+            return []
 
-            for art_id in list(author_ids)[:50]:
-                try:
-                    art_resp = session.get(f'https://www.cosme.net/beautist/article/{art_id}', timeout=10)
-                    art_soup = BeautifulSoup(art_resp.text, 'html.parser')
-                    author_link = art_soup.select_one('.author-info a')
-                    if not author_link: continue
-                    author_href = author_link.get('href', '')
-                    if not author_href.startswith('http'): author_href = 'https://www.cosme.net' + author_href
-                    author_name = author_link.get_text(strip=True)
+    with ThreadPoolExecutor(max_workers=15) as executor:
+        futures = {executor.submit(fetch_list_page, url): url for url in scrape_urls}
+        for fut in as_completed(futures):
+            author_ids.update(fut.result())
+            
+    art_ids = list(author_ids)
+    log(f"[@cosme] 고유 글 ID {len(art_ids)}개 추출 완료. 저자 정보 병렬 조회 시작...")
+
+    # 저자 URL -> 저자명 맵
+    authors_to_fetch = {}
+    
+    def fetch_article_author(art_id):
+        try:
+            url = f'https://www.cosme.net/beautist/article/{art_id}'
+            art_resp = session.get(url, timeout=8)
+            if art_resp.status_code != 200:
+                return None
+            art_soup = BeautifulSoup(art_resp.text, 'html.parser')
+            author_link = art_soup.select_one('.author-info a')
+            if not author_link:
+                return None
+            author_href = author_link.get('href', '')
+            if not author_href.startswith('http'):
+                author_href = 'https://www.cosme.net' + author_href
+            author_name = author_link.get_text(strip=True)
+            
+            if '/brand/' in author_href or is_brand_account(author_name):
+                return None
+            if author_name in existing_authors:
+                return None
+            return (author_href, author_name)
+        except:
+            return None
+
+    # 탐색할 최대 글 개수를 500개로 제한
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        futures = {executor.submit(fetch_article_author, aid): aid for aid in art_ids[:500]}
+        for fut in as_completed(futures):
+            res = fut.result()
+            if res:
+                author_href, author_name = res
+                authors_to_fetch[author_href] = author_name
+                
+    log(f"[@cosme] 고유 저자 계정 {len(authors_to_fetch)}개 분류 완료. 프로필 및 팔로워 수 병렬 조회 시작...")
+
+    results = []
+    
+    def fetch_follower_count(author_href, author_name):
+        try:
+            prof_resp = session.get(author_href, timeout=8)
+            if prof_resp.status_code == 200:
+                m = re.search(r'フォロワー(?:&nbsp;|\s|<span[^>]*>)*([\d,]+)', prof_resp.text)
+                if m:
+                    fc = int(m.group(1).replace(',', ''))
+                    return (author_name, author_href, fc)
+            return None
+        except:
+            return None
+
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        futures = {executor.submit(fetch_follower_count, href, name): href for href, name in authors_to_fetch.items()}
+        for fut in as_completed(futures):
+            res = fut.result()
+            if res:
+                name, href, fc = res
+                if effective_min <= fc <= followers_max:
+                    results.append(make_record('cosme', name, href, category, 'JP', fc, 0))
                     
-                    if '/brand/' in author_href or is_brand_account(author_name):
-                        continue
-                        
-                    # Playwright를 활용해 실제 팔로워 수 가져오기
-                    fc = 0
-                    if browser_instance:
-                        try:
-                            page = browser_instance.new_page()
-                            page.goto(author_href, timeout=15000)
-                            text = page.locator('body').inner_text()
-                            m = re.search(r'フォロワー\s*([\d,]+)', text)
-                            if m: fc = int(m.group(1).replace(',', ''))
-                            page.close()
-                        except:
-                            pass
-                            
-                    if followers_min <= fc <= followers_max:
-                        results.append(make_record('cosme', author_name, author_href, category, 'JP', fc, 0))
-                        
-                except Exception as e:
-                    print(f"[@cosme] article {art_id}: {e}", file=sys.stderr)
-
-        except Exception as e:
-            print(f"[@cosme] Failed to fetch {url}: {e}", file=sys.stderr)
-
-    if browser_instance:
-        browser_instance.close()
-    if playwright_ctx:
-        playwright_ctx.stop()
-
+    log(f"[@cosme] 수집 완료. 최종 필터 통과: {len(results)}건")
     return results
 
 # ─────────────────────────────────────────
@@ -1770,7 +1817,7 @@ INSERT INTO influencers (
     platform, account_name, account_url, category, country,
     follower_count, avg_view_count, email, gender, age_range,
     audience_demo, source_data
-) VALUES (
+) SELECT 
     '{esc(rec["platform"])}',
     '{esc(rec["account_name"])}',
     '{esc(rec["account_url"])}',
@@ -1783,6 +1830,10 @@ INSERT INTO influencers (
     '{esc(rec.get("age_range","18-34"))}',
     '{esc(json.dumps(rec.get("audience_demo",{}), ensure_ascii=False))}'::jsonb,
     '{esc(json.dumps(rec.get("source_data",{}), ensure_ascii=False))}'::jsonb
+WHERE NOT EXISTS (
+    SELECT 1 FROM deleted_influencers d
+    WHERE d.platform = '{esc(rec["platform"])}' 
+      AND d.account_name = '{esc(rec["account_name"])}'
 )
 ON CONFLICT (platform, account_name)
 DO UPDATE SET
@@ -1808,7 +1859,7 @@ RETURNING (xmax = 0) AS is_new;
             out = (result.stdout or '').strip().lower()
             if out.startswith('t'):
                 new_count += 1
-            else:
+            elif out.startswith('f'):
                 update_count += 1
         except Exception as e:
             print(f"[DB ERR] {rec.get('account_name','')}: {e}", file=sys.stderr)

@@ -59,12 +59,14 @@ function switchView(name) {
     influencers: ['인플루언서 목록', '전체 수집된 인플루언서 데이터 조회'],
     collect: ['데이터 수집', '플랫폼별 인플루언서 검색 및 수집'],
     bookmarks: ['즐겨찾기', '협업 후보로 저장한 인플루언서 목록'],
+    colab: ['협업 제안', '수신된 협력 동의 목록 확인 및 파트너 관리'],
     campaign: ['캠페인 제안', '인플루언서에게 제안 메시지(DM/Email) 발송']
   };
   $('page-title').textContent = titles[name][0];
   $('page-subtitle').textContent = titles[name][1];
 
   if (name === 'bookmarks') renderBookmarks();
+  if (name === 'colab') renderColab();
   if (name === 'influencers') renderTable();
 }
 
@@ -342,6 +344,7 @@ function renderTable() {
       <td>${inf.country || '—'}</td>
       <td>${inf.email ? `<a href="mailto:${inf.email}">${escHtml(inf.email)}</a>` : '—'}</td>
       <td>${fmtDate(inf.last_updated)}</td>
+      <td style="text-align:center;">${inf.colab_agreed ? '<span class="badge-agree">동의</span>' : '—'}</td>
       <td style="display: flex; gap: 8px;">
         <button class="btn-detail" onclick="openModal(${inf.id})">상세</button>
         <button class="btn-detail" style="background: rgba(239,68,68,0.1); color: #ef4444; border-color: rgba(239,68,68,0.3);" onclick="deleteInfluencer(${inf.id})">삭제</button>
@@ -977,12 +980,14 @@ $('btn-campaign-load')?.addEventListener('click', async () => {
   const category = $('campaign-category-filter').value;
   const country = $('campaign-country-filter')?.value;
   const keyword = $('campaign-keyword-filter').value;
+  const bookmark = $('campaign-bookmark-filter')?.checked;
+  const colab = $('campaign-colab-filter')?.checked;
   
   const countEl = $('campaign-target-count');
   if (countEl) countEl.textContent = '0';
   
   const tbody = $('campaign-target-tbody');
-  tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; padding:20px; color:#a89bc2;">⏳ 실제 DB에서 데이터를 불러오는 중...</td></tr>`;
+  tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:20px; color:#a89bc2;">⏳ 실제 DB에서 데이터를 불러오는 중...</td></tr>`;
   
   try {
     const params = new URLSearchParams();
@@ -990,6 +995,7 @@ $('btn-campaign-load')?.addEventListener('click', async () => {
     if (category) params.append('category', category);
     if (country && country !== 'ALL') params.append('country', country);
     if (keyword) params.append('search', keyword);
+    if (bookmark) params.append('bookmarkedOnly', 'true');
     
     // DB에서 직접 필터링된 데이터 호출
     const res = await fetch(`${API}/api/influencers?${params.toString()}`);
@@ -1002,6 +1008,7 @@ $('btn-campaign-load')?.addEventListener('click', async () => {
       let pass = true;
       if (platform) pass = pass && (i.platform === platform);
       if (country) pass = pass && (i.country === country);
+      if (colab) pass = pass && (i.colab_agreed === true);
       return pass;
     });
     campaignSelectedIds.clear();
@@ -1009,7 +1016,7 @@ $('btn-campaign-load')?.addEventListener('click', async () => {
     if (countEl) countEl.textContent = campaignTargetList.length;
     
     if (campaignTargetList.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; padding:20px; color:#a89bc2;">선택한 조건에 맞는 인플루언서가 DB에 없습니다.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:20px; color:#a89bc2;">선택한 조건에 맞는 인플루언서가 DB에 없습니다.</td></tr>`;
       if ($('campaign-pagination')) $('campaign-pagination').innerHTML = '';
       return;
     }
@@ -1018,7 +1025,7 @@ $('btn-campaign-load')?.addEventListener('click', async () => {
     renderCampaignPage(1);
     
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; padding:20px; color:#ef4444;">❌ DB 조회 실패: ${err.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:20px; color:#ef4444;">❌ DB 조회 실패: ${err.message}</td></tr>`;
   }
 });
 
@@ -1042,6 +1049,7 @@ function renderCampaignPage(page) {
     <tr>
       <td><input type="checkbox" class="campaign-checkbox" data-id="${inf.id}" ${campaignSelectedIds.has(String(inf.id)) ? 'checked' : ''}></td>
       <td><span class="platform-badge ${inf.platform}">${PLATFORM_LABELS[inf.platform] || inf.platform}</span></td>
+      <td style="text-align:center;">${inf.is_bookmarked ? '⭐' : ''}</td>
       <td><strong class="clickable-account" onclick="openModal(${inf.id})" style="cursor: pointer; text-decoration: underline; color: #a78bfa;" title="상세 정보 보기">${escHtml(inf.account_name)}</strong></td>
       <td>${escHtml(inf.category || '')}</td>
     </tr>
@@ -1137,7 +1145,50 @@ $('campaign-form')?.addEventListener('submit', async (e) => {
     
     const data = await res.json();
     if (res.ok && data.success) {
-      resultDiv.innerHTML = `<span style="color:#10b981;">✅ 발송 성공! (총 ${data.sent_count}건 시뮬레이션 완료)</span>`;
+      let html = `<span style="color:#10b981;">✅ 발송 완료! (총 ${data.sent_count}건 시뮬레이션)</span>`;
+      if (data.simulated_messages && data.simulated_messages.length > 0) {
+        const escapeHtml = (str) => {
+          return String(str).replace(/[&<>"']/g, function(match) {
+            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[match];
+          });
+        };
+
+        // 1. 발송 메시지 미리보기 (샘플 1개)
+        const sample = data.simulated_messages[0];
+        let safeMessage = escapeHtml(sample.final_message);
+        const safeUrl = escapeHtml(sample.tracking_url);
+        const safeContentUrl = contentUrl ? escapeHtml(contentUrl) : '';
+        
+        // 미리보기 UI에서만 긴 URL 대신 직관적인 [상품 구매 링크] 버튼으로 변환 표기
+        // (실제 발송되는 DM 데이터는 SNS 정책상 일반 텍스트 URL로 나감)
+        if (sample.tracking_url) {
+          safeMessage = safeMessage.split(safeUrl).join(`<div style="margin-top: 10px;"><a href="#" onclick="return false;" style="display: inline-block; padding: 8px 16px; background: #6366f1; color: white; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">🛒 상품 구매 링크 (발송 시 개별 추적 링크로 자동 변환됨)</a></div>`);
+        }
+
+        html += `<div style="margin-top: 15px; background: #262035; padding: 15px; border-radius: 8px; border: 1px solid #4a3f64;">
+          <h4 style="margin-bottom: 10px; color: #e9d5ff;">🔍 발송 메시지 미리보기</h4>
+          <div style="background: #1a1528; padding: 10px; border-radius: 6px; border: 1px solid #3d3455; font-size: 13px; color: #d1d5db; white-space: pre-wrap; line-height: 1.4;">${safeMessage}${safeContentUrl ? `\n\n<span style="color: #10b981;">🔗 상품 관련 콘텐츠 정보 링크:</span>\n<a href="${safeContentUrl}" target="_blank" style="color: #a78bfa; text-decoration: underline;">${safeContentUrl}</a>` : ''}</div>
+        </div>`;
+
+        // 2. 수신자 목록
+        html += `<div style="margin-top: 15px; background: #262035; padding: 15px; border-radius: 8px; border: 1px solid #4a3f64;">
+          <h4 style="margin-bottom: 10px; color: #e9d5ff;">👥 수신자 목록 및 추적 링크</h4>
+          <div style="max-height: 200px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; font-family: monospace;">`;
+        
+        data.simulated_messages.forEach(m => {
+          const sUrl = escapeHtml(m.tracking_url);
+          html += `
+            <div style="background: #1a1528; padding: 8px; border-radius: 6px; border: 1px solid #3d3455; font-size: 12px; color: #a89bc2;">
+              <span style="display:inline-block; padding:2px 6px; background:#4c3ba5; border-radius:4px; margin-right:5px; color:#fff">${m.platform}</span>
+              <strong style="color: #d1d5db;">@${m.account_name}</strong>
+              ${sUrl ? `<div style="margin-top: 4px; word-break: break-all;"><a href="${sUrl}" target="_blank" style="color: #a78bfa; text-decoration: none;">${sUrl}</a></div>` : ''}
+            </div>
+          `;
+        });
+        
+        html += `</div></div>`;
+      }
+      resultDiv.innerHTML = html;
     } else {
       resultDiv.innerHTML = `<span style="color:#ef4444;">❌ 오류: ${data.error}</span>`;
     }
@@ -1184,6 +1235,264 @@ $('btn-campaign-translate')?.addEventListener('click', async () => {
   } finally {
     btn.disabled = false;
     if (progress) progress.style.display = 'none';
+  }
+});
+
+// ---- Colab Proposal Logic ----
+function renderColab() {
+  const tbody = $('colab-tbody');
+  const countEl = $('colab-count');
+  const colabList = state.influencers.filter(i => i.colab_agreed);
+
+  if (countEl) countEl.textContent = colabList.length;
+
+  if (!colabList.length) {
+    if(tbody) tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:20px; color:#a89bc2;">협업에 동의한 파트너가 없습니다.</td></tr>';
+    return;
+  }
+
+  if(tbody) tbody.innerHTML = colabList.map(inf => `
+    <tr>
+      <td><span class="platform-badge badge-${inf.platform}">${PLATFORM_LABELS[inf.platform] || inf.platform}</span></td>
+      <td><strong class="clickable-account" onclick="openModal(${inf.id})" style="cursor: pointer; text-decoration: underline; color: #a78bfa;">${escHtml(inf.account_name)}</strong></td>
+      <td>${escHtml(inf.category || '—')}</td>
+      <td>${fmtNum(inf.follower_count)}</td>
+      <td>${inf.country || '—'}</td>
+    </tr>
+  `).join('');
+}
+
+$('btn-colab-translate')?.addEventListener('click', async () => {
+  const textElem = $('colab-proposal-text');
+  if(!textElem) return;
+  const text = textElem.value.trim();
+  const targetLang = $('colab-translate-lang').value;
+  
+  const btn = $('btn-colab-translate');
+  const progress = $('colab-translate-progress');
+  
+  btn.disabled = true;
+  if (progress) progress.style.display = 'flex';
+  
+  try {
+    const res = await fetch(`${API}/api/translate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, targetLang })
+    });
+    
+    const data = await res.json();
+    if (res.ok && data.translatedText) {
+      textElem.value = data.translatedText;
+    } else {
+      alert(`번역 오류: ${data.error || '알 수 없는 오류가 발생했습니다.'}`);
+    }
+  } catch (err) {
+    console.error('Translation failed:', err);
+    alert(`번역 요청 실패: ${err.message}`);
+  } finally {
+    btn.disabled = false;
+    if (progress) progress.style.display = 'none';
+  }
+});
+
+// ---- Colab Target List & Send Logic ----
+let colabSelectedIds = new Set();
+let colabTargetList = [];
+let colabCurrentPage = 1;
+const COLAB_PAGE_SIZE = 50;
+
+$('btn-colab-target-load')?.addEventListener('click', async () => {
+  const platform = $('colab-platform-filter').value;
+  const category = $('colab-category-filter').value;
+  const country = $('colab-country-filter')?.value;
+  const keyword = $('colab-keyword-filter').value;
+  const bookmark = $('colab-bookmark-filter')?.checked;
+  
+  const countEl = $('colab-target-count');
+  if (countEl) countEl.textContent = '0';
+  
+  const tbody = $('colab-target-tbody');
+  tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:20px; color:#a89bc2;">⏳ 데이터를 불러오는 중...</td></tr>`;
+  
+  try {
+    const params = new URLSearchParams();
+    if (platform) params.append('platform', platform);
+    if (category) params.append('category', category);
+    if (country && country !== 'ALL') params.append('country', country);
+    if (keyword) params.append('search', keyword);
+    if (bookmark) params.append('bookmarkedOnly', 'true');
+    
+    const res = await fetch(`${API}/api/influencers?${params.toString()}`);
+    if (!res.ok) throw new Error('API 응답 오류');
+    
+    const dbData = await res.json();
+    
+    colabTargetList = dbData.filter(i => {
+      let pass = true;
+      if (platform) pass = pass && (i.platform === platform);
+      if (country) pass = pass && (i.country === country);
+      return pass;
+    });
+    colabSelectedIds.clear();
+    
+    if (countEl) countEl.textContent = colabTargetList.length;
+    
+    if (colabTargetList.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:20px; color:#a89bc2;">선택한 조건에 맞는 인플루언서가 없습니다.</td></tr>`;
+      if ($('colab-pagination')) $('colab-pagination').innerHTML = '';
+      return;
+    }
+    
+    colabCurrentPage = 1;
+    renderColabPage(1);
+    
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:20px; color:#ef4444;">❌ DB 조회 실패: ${err.message}</td></tr>`;
+  }
+});
+
+function renderColabPage(page) {
+  const tbody = $('colab-target-tbody');
+  const pag = $('colab-pagination');
+  if (!tbody) return;
+  
+  const total = colabTargetList.length;
+  const maxPage = Math.ceil(total / COLAB_PAGE_SIZE) || 1;
+  colabCurrentPage = Math.max(1, Math.min(page, maxPage));
+  
+  const start = (colabCurrentPage - 1) * COLAB_PAGE_SIZE;
+  const end = start + COLAB_PAGE_SIZE;
+  const pageData = colabTargetList.slice(start, end);
+  
+  tbody.innerHTML = pageData.map(inf => `
+    <tr>
+      <td><input type="checkbox" class="colab-checkbox" data-id="${inf.id}" ${colabSelectedIds.has(String(inf.id)) ? 'checked' : ''}></td>
+      <td><span class="platform-badge badge-${inf.platform}">${PLATFORM_LABELS[inf.platform] || inf.platform}</span></td>
+      <td><strong class="clickable-account" onclick="openModal(${inf.id})" style="cursor: pointer; text-decoration: underline; color: #a78bfa;" title="상세 정보 보기">${escHtml(inf.account_name)}</strong></td>
+      <td>${escHtml(inf.category || '')}</td>
+      <td style="text-align: right;">${fmtNum(inf.follower_count)}</td>
+    </tr>
+  `).join('');
+  
+  const checkAll = $('colab-check-all');
+  if (checkAll) {
+    const boxes = document.querySelectorAll('.colab-checkbox');
+    checkAll.checked = boxes.length > 0 && Array.from(boxes).every(b => b.checked);
+  }
+  
+  if (pag) {
+    if (maxPage <= 1) {
+      pag.innerHTML = '';
+      return;
+    }
+    let html = `<button class="btn-page" onclick="renderColabPage(${colabCurrentPage - 1})" ${colabCurrentPage === 1 ? 'disabled' : ''}>◀</button>`;
+    let startP = Math.max(1, colabCurrentPage - 4);
+    let endP = Math.min(maxPage, startP + 9);
+    if (endP - startP < 9) startP = Math.max(1, endP - 9);
+    for (let i = startP; i <= endP; i++) {
+      html += `<button class="btn-page ${i === colabCurrentPage ? 'active' : ''}" onclick="renderColabPage(${i})">${i}</button>`;
+    }
+    html += `<button class="btn-page" onclick="renderColabPage(${colabCurrentPage + 1})" ${colabCurrentPage === maxPage ? 'disabled' : ''}>▶</button>`;
+    pag.innerHTML = html;
+  }
+}
+
+$('colab-check-all')?.addEventListener('change', (e) => {
+  const isChecked = e.target.checked;
+  const checkboxes = document.querySelectorAll('.colab-checkbox');
+  checkboxes.forEach(cb => {
+    cb.checked = isChecked;
+    const id = parseInt(cb.getAttribute('data-id'), 10);
+    if (isChecked) colabSelectedIds.add(id);
+    else colabSelectedIds.delete(id);
+  });
+});
+
+$('colab-target-tbody')?.addEventListener('change', (e) => {
+  if (e.target.classList.contains('colab-checkbox')) {
+    const id = parseInt(e.target.getAttribute('data-id'), 10);
+    if (e.target.checked) colabSelectedIds.add(id);
+    else colabSelectedIds.delete(id);
+  }
+});
+
+$('btn-colab-send')?.addEventListener('click', async () => {
+  if (colabSelectedIds.size === 0) {
+    alert('발송 대상 계정을 최소 1명 이상 선택해주세요.');
+    return;
+  }
+  
+  const message = $('colab-proposal-text').value;
+  const baseUrl = $('colab-url-input').value;
+  const platform = $('colab-platform-filter').value;
+  
+  const payload = {
+    method: 'dm',
+    platform,
+    influencer_ids: Array.from(colabSelectedIds),
+    message: message + "\\n\\n협업 동의 페이지: " + baseUrl + "{ID_PARAM}",
+    product_url: '',
+    content_url: ''
+  };
+  
+  const btn = $('btn-colab-send');
+  const resultDiv = $('colab-result');
+  btn.disabled = true;
+  btn.textContent = '발송 중...';
+  resultDiv.innerHTML = '<span style="color:#a89bc2;">발송 진행 중입니다... (시뮬레이션 모드)</span>';
+  
+  try {
+    const res = await fetch(`${API}/api/campaign/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    
+    const data = await res.json();
+    if (res.ok && data.success) {
+      let html = `<span style="color:#10b981;">✅ 발송 완료! (총 ${data.sent_count}건 시뮬레이션)</span>`;
+      if (data.simulated_messages && data.simulated_messages.length > 0) {
+        const escapeHtml = (str) => {
+          return String(str).replace(/[&<>"']/g, function(match) {
+            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[match];
+          });
+        };
+
+        const sample = data.simulated_messages[0];
+        let safeMessage = escapeHtml(sample.final_message).replace('{ID_PARAM}', sample.id);
+
+        html += `<div style="margin-top: 15px; background: #262035; padding: 15px; border-radius: 8px; border: 1px solid #4a3f64;">
+          <h4 style="margin-bottom: 10px; color: #e9d5ff;">🔍 발송 메시지 미리보기</h4>
+          <div style="background: #1a1528; padding: 10px; border-radius: 6px; border: 1px solid #3d3455; font-size: 13px; color: #d1d5db; white-space: pre-wrap; line-height: 1.4;">${safeMessage}</div>
+        </div>`;
+
+        html += `<div style="margin-top: 15px; background: #262035; padding: 15px; border-radius: 8px; border: 1px solid #4a3f64;">
+          <h4 style="margin-bottom: 10px; color: #e9d5ff;">👥 수신자 목록 및 동의 링크</h4>
+          <div style="max-height: 200px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; font-family: monospace;">`;
+        
+        data.simulated_messages.forEach(m => {
+          const sUrl = escapeHtml(baseUrl + m.id);
+          html += `
+            <div style="background: #1a1528; padding: 8px; border-radius: 6px; border: 1px solid #3d3455; font-size: 12px; color: #a89bc2;">
+              <span style="display:inline-block; padding:2px 6px; background:#4c3ba5; border-radius:4px; margin-right:5px; color:#fff">${m.platform}</span>
+              <strong style="color: #d1d5db;">@${m.account_name}</strong>
+              <div style="margin-top: 4px; word-break: break-all;"><a href="${sUrl}" target="_blank" style="color: #a78bfa; text-decoration: none;">${sUrl}</a></div>
+            </div>
+          `;
+        });
+        
+        html += `</div></div>`;
+      }
+      resultDiv.innerHTML = html;
+    } else {
+      resultDiv.innerHTML = `<span style="color:#ef4444;">❌ 오류: ${data.error}</span>`;
+    }
+  } catch (err) {
+    resultDiv.innerHTML = `<span style="color:#ef4444;">❌ 요청 실패: ${err.message}</span>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '동의 DM 보내기';
   }
 });
 

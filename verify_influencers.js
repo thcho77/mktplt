@@ -187,24 +187,23 @@ async function verifyUnsupported(row) {
   return false;
 }
 
-async function verifyCosme(browser, row) {
+async function verifyCosme(row) {
   try {
-    const page = await browser.newPage();
-    await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-    await page.goto(row.account_url, { waitUntil: 'domcontentloaded', timeout: 15000 });
-    
-    const text = await page.evaluate(() => document.body.innerText);
-    await page.close();
+    const res = await fetch(row.account_url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      },
+      signal: AbortSignal.timeout(10000)
+    });
+    if (!res.ok) throw new Error(`HTTP status ${res.status}`);
+    const buffer = await res.arrayBuffer();
+    const decoder = new TextDecoder('shift-jis');
+    const html = decoder.decode(buffer);
     
     let count = 0;
-    for (const line of text.split('\n')) {
-      if (line.includes('フォロワー')) {
-        const m = line.match(/フォロワー\s*([\d,]+)/);
-        if (m) {
-          count = parseNumber(m[1]);
-          break;
-        }
-      }
+    const m = html.match(/フォロワー(?:&nbsp;|\s|<span[^>]*>)*([\d,]+)/);
+    if (m) {
+      count = parseNumber(m[1]);
     }
     
     if (count > 0) {
@@ -301,20 +300,9 @@ async function run() {
     if (grouped['cosme']) {
       const cosmes = grouped['cosme'];
       console.log(`[Processing] Cosme: ${cosmes.length} accounts`);
-      let browser = null;
-      try {
-        browser = await puppeteer.launch({ 
-          headless: 'new',
-          args: ['--no-sandbox', '--disable-setuid-sandbox']
-        });
-        for (const row of cosmes) {
-          const success = await verifyCosme(browser, row);
-          if (success) totalUpdated++;
-        }
-      } catch (e) {
-        console.error("[Cosme] Browser launch error:", e);
-      } finally {
-        if (browser) await browser.close();
+      for (const row of cosmes) {
+        const success = await verifyCosme(row);
+        if (success) totalUpdated++;
       }
     }
 

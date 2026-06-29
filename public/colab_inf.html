@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Influencer Collaboration Agreement</title>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    /* Basic Dark Mode Theme */
+    body {
+      font-family: 'Inter', sans-serif;
+      background: #07050f;
+      color: #f1eefe;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      margin: 0;
+      padding: 20px;
+    }
+    .card {
+      background: rgba(22, 16, 42, 0.7);
+      border: 1px solid rgba(255, 255, 255, 0.07);
+      border-radius: 16px;
+      padding: 40px;
+      max-width: 500px;
+      width: 100%;
+      text-align: center;
+      backdrop-filter: blur(12px);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    }
+    .logo {
+      font-family: 'Outfit', sans-serif;
+      font-weight: 800;
+      font-size: 24px;
+      margin-bottom: 20px;
+      background: linear-gradient(135deg, #a78bfa, #22d3ee);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    h2 {
+      margin-top: 0;
+      font-weight: 600;
+      font-size: 20px;
+      margin-bottom: 20px;
+    }
+    .proposal-text {
+      background: rgba(255, 255, 255, 0.04);
+      padding: 20px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.07);
+      margin-bottom: 30px;
+      line-height: 1.6;
+      color: #d1d5db;
+    }
+    .btn-agree {
+      background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+      border: none;
+      border-radius: 8px;
+      color: white;
+      font-size: 16px;
+      font-weight: 600;
+      padding: 14px 24px;
+      cursor: pointer;
+      width: 100%;
+      transition: all 0.2s ease;
+    }
+    .btn-agree:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 0 20px rgba(139, 92, 246, 0.35);
+    }
+    .btn-agree:disabled {
+      background: #4a3f64;
+      color: #a89bc2;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+    .message {
+      margin-top: 20px;
+      font-size: 14px;
+    }
+    .success {
+      color: #34d399;
+    }
+    .error {
+      color: #f87171;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="card">
+    <div class="logo">✦ INFLUHUB ✦</div>
+    <h2>🤝 협업 제안 동의서</h2>
+    
+    <div class="proposal-text" id="proposal-box">
+      저희 Z Platform 에서는 판매 상품에 대한 이익 공유를 통한 협업 마케팅을 제안 드리고자 합니다.
+    </div>
+
+    <button id="btn-agree" class="btn-agree">협업 동의</button>
+    <div id="status-message" class="message"></div>
+  </div>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const btn = document.getElementById('btn-agree');
+      const msgBox = document.getElementById('status-message');
+      
+      const urlParams = new URLSearchParams(window.location.search);
+      const id = urlParams.get('id');
+
+      if (!id) {
+        msgBox.textContent = '유효하지 않은 접근입니다. (ID 누락)';
+        msgBox.className = 'message error';
+        btn.disabled = true;
+        return;
+      }
+
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        btn.textContent = '처리 중...';
+
+        try {
+          const res = await fetch('/api/colab-agree', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: id })
+          });
+
+          const data = await res.json();
+          if (res.ok) {
+            msgBox.textContent = '감사합니다! 협업 동의가 완료되었습니다.';
+            msgBox.className = 'message success';
+            btn.textContent = '동의 완료됨';
+          } else {
+            msgBox.textContent = data.error || '오류가 발생했습니다.';
+            msgBox.className = 'message error';
+            btn.disabled = false;
+            btn.textContent = '협업 동의';
+          }
+        } catch (err) {
+          msgBox.textContent = '서버와의 통신에 실패했습니다.';
+          msgBox.className = 'message error';
+          btn.disabled = false;
+          btn.textContent = '협업 동의';
+        }
+      });
+    });
+  </script>
+</body>
+</html>

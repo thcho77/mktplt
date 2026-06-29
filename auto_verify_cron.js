@@ -33,7 +33,8 @@ export function startCron() {
       //    Or maybe retry 'failed' after 30 days? Let's exclude 'failed' from auto verification to save API limits.
       const query = `
         SELECT id FROM influencers 
-        WHERE verification_status IS DISTINCT FROM 'failed'
+        WHERE verification_status IS NULL 
+           OR (verification_status != 'verified' AND verification_status != 'failed')
         ORDER BY verified_at ASC NULLS FIRST 
         LIMIT 100
       `;

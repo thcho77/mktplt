@@ -43,12 +43,27 @@ const pool = new Pool({
   database: 'n8n_database'
 });
 
-// Test DB Connection
-pool.query('SELECT NOW()', (err, res) => {
+// Test DB Connection & Init Tables
+pool.query('SELECT NOW()', async (err, res) => {
   if (err) {
     console.error('[!] Database connection failed:', err.message);
   } else {
     console.log('[+] Database connected successfully.');
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS deleted_influencers (
+          id SERIAL PRIMARY KEY,
+          platform VARCHAR(50) NOT NULL,
+          account_name VARCHAR(255) NOT NULL,
+          deleted_at TIMESTAMP DEFAULT NOW(),
+          UNIQUE(platform, account_name)
+        );
+        ALTER TABLE influencers ADD COLUMN IF NOT EXISTS colab_agreed BOOLEAN DEFAULT FALSE;
+      `);
+      console.log('[+] DB schema updated (deleted_influencers, colab_agreed).');
+    } catch (dbErr) {
+      console.error('[!] Failed to create tables:', dbErr.message);
+    }
   }
 });
 
@@ -104,7 +119,7 @@ app.get('/api/influencers', async (req, res) => {
   const query = `
     SELECT id, platform, account_name, account_url, category, country, 
            follower_count, avg_view_count, email, gender, age_range, 
-           audience_demo, source_data, is_bookmarked, memo, last_updated, verified_at, verification_status
+           audience_demo, source_data, is_bookmarked, memo, last_updated, verified_at, verification_status, colab_agreed
     FROM influencers
     ${whereClause}
     ORDER BY is_bookmarked DESC, follower_count DESC;
@@ -139,6 +154,26 @@ app.get('/api/stats', async (req, res) => {
   }
 });
 
+// API: Agree to Collaboration
+app.post('/api/colab-agree', async (req, res) => {
+  const { id } = req.body;
+  if (!id) {
+    return res.status(400).json({ error: 'Influencer ID is required' });
+  }
+
+  try {
+    const query = 'UPDATE influencers SET colab_agreed = true, last_updated = NOW() WHERE id = $1 RETURNING *';
+    const result = await pool.query(query, [id]);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Influencer not found' });
+    }
+    res.json({ success: true, message: '협업 동의가 완료되었습니다.', data: result.rows[0] });
+  } catch (err) {
+    console.error('Error updating colab_agreed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // API: Toggle Bookmark Status
 app.put('/api/influencers/:id/bookmark', async (req, res) => {
   const { id } = req.params;
@@ -163,7 +198,7 @@ app.put('/api/influencers/:id/memo', async (req, res) => {
   const { memo } = req.body;
 
   try {
-    const query = 'UPDATE influencers SET memo = $1, last_updated = NOW() WHERE id = $2 RETURNING *';
+    const query = "UPDATE influencers SET memo = $1, verification_status = 'verified', verified_at = NOW(), last_updated = NOW() WHERE id = $2 RETURNING *";
     const result = await pool.query(query, [memo, id]);
     res.json(result.rows[0]);
   } catch (err) {
@@ -178,7 +213,7 @@ app.put('/api/influencers/:id/metadata', async (req, res) => {
   const { country, category } = req.body;
 
   try {
-    const query = 'UPDATE influencers SET country = $1, category = $2, last_updated = NOW() WHERE id = $3 RETURNING *';
+    const query = "UPDATE influencers SET country = $1, category = $2, verification_status = 'verified', verified_at = NOW(), last_updated = NOW() WHERE id = $3 RETURNING *";
     const result = await pool.query(query, [country, category, id]);
     res.json(result.rows[0]);
   } catch (err) {
@@ -191,10 +226,19 @@ app.put('/api/influencers/:id/metadata', async (req, res) => {
 app.delete('/api/influencers/:id', async (req, res) => {
   const { id } = req.params;
   try {
-    const result = await pool.query('DELETE FROM influencers WHERE id = $1 RETURNING *', [id]);
-    if (result.rows.length === 0) {
+    const selectRes = await pool.query('SELECT platform, account_name FROM influencers WHERE id = $1', [id]);
+    if (selectRes.rows.length === 0) {
       return res.status(404).json({ error: 'Influencer not found' });
     }
+    const { platform, account_name } = selectRes.rows[0];
+    
+    // 차단 목록에 등록
+    await pool.query(
+      'INSERT INTO deleted_influencers (platform, account_name) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+      [platform, account_name]
+    );
+
+    await pool.query('DELETE FROM influencers WHERE id = $1', [id]);
     res.json({ success: true });
   } catch (err) {
     console.error('Error deleting influencer:', err.message);
@@ -210,7 +254,7 @@ function runCollector(params) {
     const scriptPath = path.join(__dirname, 'collect_real_data.py');
     const env = { ...process.env, SEARCH_PARAMS: JSON.stringify(params) };
     
-    const proc = spawn('python3', [scriptPath], { env });
+    const proc = spawn('python3', ['-u', scriptPath], { env });
     activeCollector = proc;
     let stdout = '';
     let stderr = '';
@@ -511,19 +555,59 @@ app.post('/api/campaign/send', async (req, res) => {
     return res.status(400).json({ success: false, error: '대상 인플루언서가 없습니다.' });
   }
 
-  console.log(`[Campaign] 발송 요청 시작. 플랫폼: ${platform}, 대상: ${influencer_ids.length}명, 방식: ${method}`);
-  console.log(`[Campaign] 메시지: ${message.slice(0, 50)}...`);
-  console.log(`[Campaign] 상품URL: ${product_url}, 콘텐츠URL: ${content_url}`);
+  console.log(`[Campaign] 발송 요청 시작. 대상: ${influencer_ids.length}명, 방식: ${method}`);
 
-  // 시뮬레이션: 약간의 딜레이 후 성공 응답 반환
-  setTimeout(() => {
-    console.log(`[Campaign] 시뮬레이션 모드 - 발송 완료 처리`);
-    res.json({
-      success: true,
-      sent_count: influencer_ids.length,
-      mode: 'simulation'
+  try {
+    const result = await pool.query('SELECT id, platform, account_name FROM influencers WHERE id = ANY($1)', [influencer_ids]);
+    
+    const simulated_messages = result.rows.map(inf => {
+      let finalMessage = message;
+      let trackingUrl = product_url;
+
+      if (product_url) {
+        try {
+          const urlObj = new URL(product_url);
+          urlObj.searchParams.set('utm_source', inf.platform);
+          urlObj.searchParams.set('utm_medium', 'influencer');
+          urlObj.searchParams.set('utm_campaign', inf.account_name);
+          trackingUrl = urlObj.toString();
+        } catch (e) {
+          // URL 형식이 아닌 경우 그대로 사용
+          trackingUrl = product_url;
+        }
+      }
+
+      if (trackingUrl) {
+        if (finalMessage.includes('{상품링크}')) {
+          finalMessage = finalMessage.replace(/\{상품링크\}/g, trackingUrl);
+        } else {
+          finalMessage += `\n\n👉 상품 구매 링크: ${trackingUrl}`;
+        }
+      }
+
+      return {
+        id: inf.id,
+        account_name: inf.account_name,
+        platform: inf.platform,
+        final_message: finalMessage,
+        tracking_url: trackingUrl
+      };
     });
-  }, 1500);
+
+    setTimeout(() => {
+      console.log(`[Campaign] 시뮬레이션 모드 - 발송 완료 처리`);
+      res.json({
+        success: true,
+        sent_count: influencer_ids.length,
+        mode: 'simulation',
+        simulated_messages
+      });
+    }, 1000);
+
+  } catch (err) {
+    console.error('Campaign sending error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 // API: Trigger search (try n8n first, fallback to Python direct)
